@@ -1290,7 +1290,7 @@ if (editModal.type === 'acTracking' && char) {
 
   if (currentCharIndex === null) {
     return (<>
-      <div className="min-h-screen bg-gray-900 text-white p-4">
+      <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
         <div className="max-w-2xl mx-auto bg-gray-800 rounded-lg p-8">
           <h1 className="text-4xl font-bold mb-4 text-center">Castles & Crusades</h1>
           
@@ -1409,7 +1409,7 @@ if (editModal.type === 'acTracking' && char) {
   const { nextLevelXp, progress, canLevelUp, currentLevel } = calculateNextLevel();
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4">
+    <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
 
       {/* Header with Back Button and Save Status */}
       <div className="max-w-4xl mx-auto mb-2 flex items-center justify-between">
@@ -1448,7 +1448,7 @@ if (editModal.type === 'acTracking' && char) {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto bg-gray-800 rounded-lg p-6">
+      <div className="max-w-4xl mx-auto bg-gray-800 rounded-lg p-4 sm:p-6 overflow-hidden">
         {activeTab === 'main' && (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
@@ -1766,12 +1766,17 @@ if (editModal.type === 'acTracking' && char) {
         {activeTab === 'attack' && (
           <div className="space-y-4">
             
-<div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">Attacks</h2>
-              <div className="flex gap-2">
+<div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold">Attacks</h2>
+                <button onClick={() => setAddAttackModalOpen(true)} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700 whitespace-nowrap">
+                  + New Attack
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setEditModal({ type: 'attackInfo' })}
-                  className="px-4 py-2 bg-gray-700 rounded hover:bg-gray-600 text-base"
+                  className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 text-sm"
                 >
                   Info
                 </button>
@@ -1780,9 +1785,6 @@ if (editModal.type === 'acTracking' && char) {
                 </button>
                 <button onClick={() => setEditModal({ type: 'bonusModifiers' })} className="px-3 py-2 bg-purple-600 rounded hover:bg-purple-700 text-sm">
                   Bonus Modifiers
-                </button>
-                <button onClick={() => setAddAttackModalOpen(true)} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
-                  + New Attack
                 </button>
               </div>
             </div>
@@ -2698,24 +2700,26 @@ if (editModal.type === 'acTracking' && char) {
 
       {activeTab === 'magic' && magicInventoryView && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold">Magic Inventory</h2>
-            <div className="flex gap-2">
-<button
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Magic Inventory</h2>
+              <button
                 onClick={() => { setMagicInventoryView(false); setSelectedMagicItemId(null); }}
-                className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500"
+                className="px-3 py-2 bg-gray-600 rounded text-sm hover:bg-gray-500 whitespace-nowrap"
               >
-                ← Back to Magic
+                ← Back
               </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={resetPermanentSpellsForNewDay}
-                className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+                className="px-3 py-2 text-sm bg-blue-600 rounded hover:bg-blue-700 font-semibold"
               >
                 New Day
               </button>
               <button
                 onClick={addMagicItem}
-                className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700 font-semibold"
+                className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold"
               >
                 Add Item
               </button>
@@ -2809,47 +2813,70 @@ if (editModal.type === 'acTracking' && char) {
 
                                 return (
                                   <div key={`${item.id}-${idx}`} className="bg-gray-900/40 p-3 rounded">
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div>
-                                        <div className="font-bold">
-                                          L{s.level ?? 0} {s.name}{' '}
-                                          {g.permanent ? (
-                                            <span className="text-xs text-blue-300">(Permanent)</span>
-                                          ) : (
-                                            <span className="text-xs text-gray-400">(Consumable)</span>
-                                          )}
+                                    <div className="flex flex-col gap-3">
+                                      {/* Spell Name and Status */}
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="font-bold break-words">
+                                            L{s.level ?? 0} {s.name}{' '}
+                                            {g.permanent ? (
+                                              <span className="text-xs text-blue-300">(Permanent)</span>
+                                            ) : (
+                                              <span className="text-xs text-gray-400">(Consumable)</span>
+                                            )}
+                                          </div>
+                                          <div className="text-sm text-gray-300">
+                                            {g.permanent ? `${available} of ${count} cast${count === 1 ? '' : 's'} available today` : `${count} use${count === 1 ? '' : 's'}`}
+                                          </div>
                                         </div>
-                                        <div className="text-sm text-gray-300">
-                                          {g.permanent ? `${available} of ${count} cast${count === 1 ? '' : 's'} available today` : `${count} use${count === 1 ? '' : 's'}`}
+                                        {/* Cast and Edit buttons */}
+                                        <div className="flex gap-2 flex-shrink-0">
+                                          <button
+                                            onClick={() => castFromMagicItem(item.id, s.name, g.permanent)}
+                                            disabled={available <= 0}
+                                            className={`px-3 py-2 rounded font-semibold text-sm ${
+                                              available > 0
+                                                ? 'bg-red-600 hover:bg-red-700'
+                                                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                          >
+                                            Cast
+                                          </button>
+                                          <button
+                                            onClick={() => openEditMagicItemSpell(item.id, s.name, g.permanent)}
+                                            className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold text-sm"
+                                          >
+                                            Edit
+                                          </button>
                                         </div>
                                       </div>
 
-        
-                              <div className="mt-3 text-sm text-gray-300 space-y-2">
-                                <div className="text-sm text-gray-300">{s.description}</div>
+                                      {/* Spell Details */}
+                                      <div className="text-sm text-gray-300 space-y-2">
+                                        <div className="text-sm text-gray-300">{s.description}</div>
 
-                                <div className="grid grid-cols-2 gap-2 text-sm">
-                                  <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
-                                  <div><span className="text-gray-400">Range:</span> {s.range}</div>
-                                  <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
-                                  <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
-                                  <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
-                                  <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
-                                </div>
-                              </div>
+                                        <div className="grid grid-cols-2 gap-2 text-sm">
+                                          <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
+                                          <div><span className="text-gray-400">Range:</span> {s.range}</div>
+                                          <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
+                                          <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
+                                          <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
+                                          <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
+                                        </div>
+                                      </div>
 
                               
 
                                       {s.hasDiceRoll && (
-                                        <div className="bg-gray-800 p-3 rounded mt-3">
-                                          <div className="flex items-center gap-2 mb-2">
+                                        <div className="bg-gray-800 p-3 rounded">
+                                          <div className="flex flex-wrap items-center gap-2 mb-2">
                                             <label className="text-sm text-gray-400">Number of Dice:</label>
                                             <input
                                               type="number"
                                               min="1"
                                               value={Number(g.entries?.[0]?.numDice || 1)}
                                               onChange={(e) => setMagicItemSpellNumDice(item.id, s.name, g.permanent, e.target.value)}
-                                              className="w-20 p-1 bg-gray-700 rounded text-white text-center"
+                                              className="w-16 p-1 bg-gray-700 rounded text-white text-center"
                                             />
                                             <span className="text-sm">{s.diceType}</span>
                                           </div>
@@ -2923,27 +2950,6 @@ if (editModal.type === 'acTracking' && char) {
                                             )}
                                         </div>
                                       )}
-<div className="flex flex-col items-end gap-2">
-                                        <div className="flex gap-2">
-                                          <button
-                                            onClick={() => castFromMagicItem(item.id, s.name, g.permanent)}
-                                            disabled={available <= 0}
-                                            className={`px-3 py-2 rounded font-semibold ${
-                                              available > 0
-                                                ? 'bg-red-600 hover:bg-red-700'
-                                                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                                            }`}
-                                          >
-                                            Cast
-                                          </button>
-                                          <button
-                                            onClick={() => openEditMagicItemSpell(item.id, s.name, g.permanent)}
-                                            className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
-                                          >
-                                            Edit
-                                          </button>
-                                        </div>
-                                      </div>
                                     </div>
                                   </div>
                                 );
