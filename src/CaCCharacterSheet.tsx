@@ -141,11 +141,11 @@ function DomStepper({
   const inc = () => setVal((v) => clamp((Number(v) || 0) + step, min, max));
 
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className={`flex items-center gap-2 w-full min-w-0 ${className}`}>
       <button
         type="button"
         onClick={dec}
-        className="h-12 w-12 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold"
+        className="h-10 w-10 sm:h-12 sm:w-14 flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl sm:text-2xl font-bold leading-none active:bg-gray-500"
         aria-label="Decrease"
       >
         −
@@ -163,12 +163,12 @@ function DomStepper({
             const next = parseInt(cleaned, 10);
             setVal(Number.isFinite(next) ? next : 0);
           }}
-          className="min-w-[6rem] w-full text-center text-lg font-semibold bg-gray-800 rounded-lg h-12 px-2"
+          className="min-w-[2.25rem] flex-1 text-center text-base sm:text-lg font-semibold bg-gray-800 rounded-lg h-10 sm:h-12 px-2"
         />
 
       ) : (
 
-        <div className="min-w-[6rem] text-center text-lg font-semibold bg-gray-800 rounded-lg h-12 flex items-center justify-center px-2">
+        <div className="min-w-[2.25rem] flex-1 text-center text-base sm:text-lg font-semibold bg-gray-800 rounded-lg h-10 sm:h-12 flex items-center justify-center px-2">
 
           {valuePrefix}{val}{valueSuffix}
 
@@ -179,7 +179,7 @@ function DomStepper({
       <button
         type="button"
         onClick={inc}
-        className="h-12 w-12 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold"
+        className="h-10 w-10 sm:h-12 sm:w-14 flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl sm:text-2xl font-bold leading-none active:bg-gray-500"
         aria-label="Increase"
       >
         +
@@ -698,7 +698,13 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     spellAtk: 0,
     // Magic item modal
     magicItemName: '',
-    magicItemCapacity: ''
+    magicItemCapacity: '5',
+    // Magic item spell add modal
+    magicItemSpellSelect: '',
+    magicItemSpellCopies: 1,
+    magicItemSpellPermanent: false,
+    // Grimoire spell add modal
+    grimoireSpellSelect: ''
   });
   
   const updateModalForm = useCallback((updates) => {
@@ -1136,6 +1142,49 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return levelHP + bonusHP;
   }, [char?.hpByLevel, char?.hpBonus, char?.maxHp]);
 
+  // ===== MEMOIZED SORTED LISTS =====
+  // These prevent re-sorting on every render
+  
+  const sortedInventory = useMemo(() => 
+    (char?.inventory || []).slice().sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    ), [char?.inventory]);
+
+  const sortedAttacks = useMemo(() => 
+    (char?.attacks || []).slice().sort((a, b) => {
+      const af = !!a.isFavorite;
+      const bf = !!b.isFavorite;
+      if (af !== bf) return af ? -1 : 1;
+      const an = a.weaponId ? getBoundAttackName(a, char?.inventory) : (a.name || '');
+      const bn = b.weaponId ? getBoundAttackName(b, char?.inventory) : (b.name || '');
+      return String(an).localeCompare(String(bn));
+    }), [char?.attacks, char?.inventory]);
+
+  const sortedSpellsLearned = useMemo(() => 
+    (char?.spellsLearned || []).slice().sort((a, b) => {
+      const lvlA = Number(a?.level) || 0;
+      const lvlB = Number(b?.level) || 0;
+      if (lvlA !== lvlB) return lvlA - lvlB;
+      return (a?.name || '').localeCompare(b?.name || '');
+    }), [char?.spellsLearned]);
+
+  const sortedGrimoires = useMemo(() => 
+    (char?.grimoires || []).slice().sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    ), [char?.grimoires]);
+
+  const sortedCompanions = useMemo(() => 
+    (char?.companions || []).slice().sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    ), [char?.companions]);
+
+  const sortedMagicItems = useMemo(() => 
+    (char?.magicItems || []).slice().sort((a, b) => 
+      (a.name || '').localeCompare(b.name || '')
+    ), [char?.magicItems]);
+
+  // ===== END MEMOIZED SORTED LISTS =====
+
   // ===== END MEMOIZED CALCULATIONS =====
 
   // Attribute totals are computed from:
@@ -1348,7 +1397,19 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       });
     }
     if (editModal.type === 'newMagicItem') {
-      updateModalForm({ magicItemName: '', magicItemCapacity: '' });
+      updateModalForm({ magicItemName: '', magicItemCapacity: '5' });
+    }
+    
+    if (editModal.type === 'newMagicItemSpell') {
+      updateModalForm({ 
+        magicItemSpellSelect: '', 
+        magicItemSpellCopies: 1, 
+        magicItemSpellPermanent: false 
+      });
+    }
+    
+    if (editModal.type === 'addGrimoireSpell') {
+      updateModalForm({ grimoireSpellSelect: '' });
     }
 
     if (editModal.type === 'newItem') {
@@ -1468,6 +1529,118 @@ if (editModal.type === 'acTracking' && char) {
 
       setAcUseDex(char.acModAuto !== false);
 
+    }
+    
+    // Companion form initialization
+    if (editModal.type === 'newCompanion') {
+      resetCompanionForm();
+    }
+    if (editModal.type === 'editCompanion' && editModal.companion) {
+      setCompanionForm({
+        name: editModal.companion.name || '',
+        species: editModal.companion.species || '',
+        description: editModal.companion.description || '',
+        hp: Number(editModal.companion.hp) || 10,
+        maxHp: Number(editModal.companion.maxHp) || 10,
+        ac: Number(editModal.companion.ac) || 10,
+        groundSpeed: Number(editModal.companion.groundSpeed) || 30,
+        flySpeed: Number(editModal.companion.flySpeed) || 0,
+        saveStr: Number(editModal.companion.saves?.str?.bonus) || 0,
+        saveDex: Number(editModal.companion.saves?.dex?.bonus) || 0,
+        saveCon: Number(editModal.companion.saves?.con?.bonus) || 0,
+        saveInt: Number(editModal.companion.saves?.int?.bonus) || 0,
+        saveWis: Number(editModal.companion.saves?.wis?.bonus) || 0,
+        saveCha: Number(editModal.companion.saves?.cha?.bonus) || 0
+      });
+    }
+    
+    // Companion attack form initialization
+    if (editModal.type === 'newCompanionAttack') {
+      resetCompAttackForm();
+    }
+    if (editModal.type === 'editCompanionAttack' && editModal.attack) {
+      setCompAttackForm({
+        name: editModal.attack.name || '',
+        numDice: Number(editModal.attack.numDice) || 1,
+        dieType: Number(editModal.attack.dieType) || 6,
+        bth: Number(editModal.attack.bth) || 0,
+        mod: Number(editModal.attack.mod) || 0,
+        toHitMagic: Number(editModal.attack.toHitMagic) || 0,
+        toHitMisc: Number(editModal.attack.toHitMisc) || 0,
+        damageBonus: Number(editModal.attack.damageBonus) || 0,
+        damageMagic: Number(editModal.attack.damageMagic) || 0,
+        damageMisc: Number(editModal.attack.damageMisc) || 0
+      });
+    }
+    
+    // Attack form initialization
+    if (editModal.type === 'newAttack') {
+      resetAttackForm();
+    }
+    if (editModal.type === 'editAttack' && editModal.attack) {
+      const useDice = typeof editModal.attack.useDamageDice === 'boolean' 
+        ? editModal.attack.useDamageDice 
+        : (Number(editModal.attack.numDice ?? 1) > 0);
+      setAttackForm({
+        name: editModal.attack.name || '',
+        useDamageDice: useDice,
+        numDice: Math.max(1, Number(editModal.attack.numDice ?? 1)),
+        dieType: Number(editModal.attack.dieType) || 8,
+        weaponMode: editModal.attack.weaponMode || 'melee',
+        bth: Number(editModal.attack.bth) || 0,
+        attrMod: Number(editModal.attack.attrMod) || 0,
+        magic: Number(editModal.attack.magic) || 0,
+        misc: Number(editModal.attack.misc) || 0,
+        damageMod: Number(editModal.attack.damageMod) || 0,
+        damageMagic: Number(editModal.attack.damageMagic) || 0,
+        damageMisc: Number(editModal.attack.damageMisc) || 0
+      });
+    }
+    
+    // Spell form initialization
+    if (editModal.type === 'newSpell') {
+      resetSpellForm();
+    }
+    if (editModal.type === 'editSpell' && editModal.spell) {
+      setSpellForm({
+        name: editModal.spell.name || '',
+        level: Number(editModal.spell.level) || 0,
+        description: editModal.spell.description || '',
+        prepTime: editModal.spell.prepTime || '',
+        range: editModal.spell.range || '',
+        duration: editModal.spell.duration || '',
+        aoe: editModal.spell.aoe || '',
+        savingThrow: editModal.spell.savingThrow || '',
+        spellResistance: !!editModal.spell.spellResistance,
+        hasDiceRoll: !!editModal.spell.hasDiceRoll,
+        diceType: editModal.spell.diceType || '',
+        diceBonus: Number(editModal.spell.diceBonus) || 0,
+        verbal: !!editModal.spell.verbal,
+        somatic: !!editModal.spell.somatic,
+        material: !!editModal.spell.material,
+        materialDesc: editModal.spell.materialDesc || ''
+      });
+    }
+    
+    // Magic item spell form initialization
+    if (editModal.type === 'editMagicItemSpell') {
+      const spell = editModal.spell || {};
+      setMiSpellForm({
+        selectedSpellId: '',
+        copies: Number(editModal.copies) || 1,
+        permanent: !!editModal.permanent,
+        name: spell.name || '',
+        level: Number(spell.level) || 0,
+        description: spell.description || '',
+        prepTime: spell.prepTime || '',
+        duration: spell.duration || '',
+        range: spell.range || '',
+        aoe: spell.aoe || '',
+        savingThrow: spell.savingThrow || '',
+        spellResistance: !!spell.spellResistance,
+        hasDiceRoll: !!spell.hasDiceRoll,
+        diceType: spell.diceType || ''
+      });
     }
   }, [editModal, char]);
 
@@ -2419,14 +2592,7 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No attacks added yet</div>
             )}
 
-            {[...(char.attacks || [])].sort((a, b) => {
-              const af = !!a.isFavorite;
-              const bf = !!b.isFavorite;
-              if (af !== bf) return af ? -1 : 1;
-              const an = a.weaponId ? getBoundAttackName(a, char.inventory) : (a.name || '');
-              const bn = b.weaponId ? getBoundAttackName(b, char.inventory) : (b.name || '');
-              return String(an).localeCompare(String(bn));
-            }).map(attack => {
+            {sortedAttacks.map(attack => {
               const weaponItem = (char.inventory || []).find((it) => String(it.id) === String(attack.weaponId || ''));
 
               const modeResolved = (attack.weaponMode || attack.weaponType || weaponItem?.weaponType || 'melee');
@@ -2507,7 +2673,7 @@ if (editModal.type === 'acTracking' && char) {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mb-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
                     <div className="bg-gray-800 p-3 rounded">
                       <div className="font-bold text-blue-400 mb-2">TO HIT</div>
                       <div className="text-sm space-y-1 mb-2">                        <div>BTH (Base): {char.baseBth >= 0 ? '+' : ''}{char.baseBth || 0}</div>
@@ -2591,16 +2757,16 @@ if (editModal.type === 'acTracking' && char) {
                       )}
                       {rollModal?.attack?.id === attack.id && rollModal.type === 'damage' && (
                         <div className="mt-2 p-2 bg-gray-600 rounded">
-                        <div className="flex items-center gap-2 mb-2">
-                          <label className="text-xs text-gray-300">Damage Dice #</label>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <label className="text-xs text-gray-300 whitespace-nowrap">Dice #</label>
                           <input
                             type="number"
                             value={rollModal.diceCount ?? attack.numDice}
                             onChange={(e) => {
-                              const v = parseInt(e.target.value || '0', 10) || 0;
-                              setRollModal({ ...rollModal, diceCount: Math.max(0, v) });
+                              const v = e.target.value === '' ? '' : (parseInt(e.target.value || '0', 10) || 0);
+                              setRollModal({ ...rollModal, diceCount: typeof v === 'number' ? Math.max(0, v) : v });
                             }}
-                            className="w-16 p-1 bg-gray-800 rounded text-white text-xs text-center"
+                            className="w-14 p-1 bg-gray-800 rounded text-white text-xs text-center"
                           />
                           <div className="text-xs text-gray-400">d{attack.dieType}</div>
                         </div>
@@ -3044,7 +3210,7 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No grimoires yet</div>
             )}
 
-            {(char.grimoires || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(grimoire => {
+            {sortedGrimoires.map(grimoire => {
               const pointsLeft = getGrimoirePointsLeft(grimoire);
               const entries = (grimoire.entries || []).map(e => ({
                 ...e,
@@ -3626,12 +3792,7 @@ if (editModal.type === 'acTracking' && char) {
               (g) => g.permanent && g.entries.some((e) => !!e.usedToday)
             );
 
-            const learnedSorted = (char.spellsLearned || []).slice().sort((a, b) => {
-              const la = a.level ?? 0;
-              const lb = b.level ?? 0;
-              if (la !== lb) return la - lb;
-              return String(a.name).localeCompare(String(b.name));
-            });
+            const learnedSorted = sortedSpellsLearned;
 
             return (
               <>
@@ -4182,7 +4343,7 @@ if (editModal.type === 'acTracking' && char) {
                             type="number"
                             min="0"
                             value={diceConfig[`d${sides}`]}
-                            onChange={(e) => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, parseInt(e.target.value) || 0) })}
+                            onChange={(e) => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, e.target.value === '' ? '' : (parseInt(e.target.value) || 0)) })}
                             className="w-20 p-2 bg-gray-800 rounded text-white text-center text-xl font-bold"
                           />
                           <button
@@ -4404,7 +4565,7 @@ if (editModal.type === 'acTracking' && char) {
                           </button>
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                           <div>
                             <div className="text-blue-400 font-bold">TO HIT: +{toHit}</div>
                             <button
@@ -4592,7 +4753,7 @@ if (editModal.type === 'acTracking' && char) {
             {char.inventory.length === 0 && (
               <div className="text-center text-gray-400 py-8">No items yet</div>
             )}
-            {char.inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(item => {
+            {sortedInventory.map(item => {
               const totalWeight = item.weightPer * item.quantity;
               return (
                 <div key={item.id} className="bg-gray-700 p-4 rounded">
@@ -4818,10 +4979,7 @@ if (editModal.type === 'acTracking' && char) {
               <div className="border-t border-gray-700 pt-3">
                 <div className="font-bold mb-2">From Item (Weapon)</div>
                 {(() => {
-                  const inventoryWeapons = (char.inventory || [])
-                    .filter(it => !!it?.isWeapon)
-                    .slice()
-                    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+                  const inventoryWeapons = sortedInventory.filter(it => !!it?.isWeapon);
 
                   const used = new Set(
                     (char.attacks || [])
@@ -5488,7 +5646,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="number"
                     value={modalForms.speedBase}
-                    onChange={(e) => updateModalForm({ speedBase: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => updateModalForm({ speedBase: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
 
@@ -5496,7 +5654,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="number"
                     value={modalForms.speedBonus}
-                    onChange={(e) => updateModalForm({ speedBonus: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => updateModalForm({ speedBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
 
@@ -5575,7 +5733,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <input
                       type="number"
                       value={modalForms.hpCurrent}
-                      onChange={(e) => updateModalForm({ hpCurrent: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => updateModalForm({ hpCurrent: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
                       min={0}
                       max={calculateMaxHP()}
@@ -5588,7 +5746,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <input
                       type="number"
                       value={modalForms.hpDelta}
-                      onChange={(e) => updateModalForm({ hpDelta: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => updateModalForm({ hpDelta: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
                       step={1}
                     />
@@ -5640,7 +5798,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <input
                       type="number"
                       value={modalForms.hpBonus}
-                      onChange={(e) => updateModalForm({ hpBonus: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => updateModalForm({ hpBonus: e.target.value === '' ? '' : e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
                     />
                   </div>
@@ -5834,10 +5992,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div className="text-sm text-gray-400">No armor items in inventory</div>
                         ) : (
                           <div className="bg-gray-700 rounded p-2 pr-4 max-h-48 overflow-y-auto space-y-1" style={{ scrollbarGutter: 'stable' }}>
-                            {(char.inventory || [])
+                            {sortedInventory
                               .filter(i => i.isArmor)
-                              .slice()
-                              .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
                               .map((it) => {
                                 const sid = String(it.id);
                                 const checked = (equippedArmorIds || []).includes(sid);
@@ -5995,7 +6151,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <input
                           type="number"
                           value={modalForms.acMod}
-                          onChange={(e) => updateModalForm({ acMod: parseInt(e.target.value) || 0 })}
+                          onChange={(e) => updateModalForm({ acMod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                           className="w-full p-2 bg-gray-700 rounded text-white"
                         />
                       )}
@@ -6006,7 +6162,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         value={modalForms.acMagic}
-                        onChange={(e) => updateModalForm({ acMagic: parseInt(e.target.value) || 0 })}
+                        onChange={(e) => updateModalForm({ acMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6016,7 +6172,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         value={modalForms.acMisc}
-                        onChange={(e) => updateModalForm({ acMisc: parseInt(e.target.value) || 0 })}
+                        onChange={(e) => updateModalForm({ acMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6025,7 +6181,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         value={modalForms.acBonus}
-                        onChange={(e) => updateModalForm({ acBonus: parseInt(e.target.value) || 0 })}
+                        onChange={(e) => updateModalForm({ acBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6318,7 +6474,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="number"
                     value={modalForms.saveBonus}
-                    onChange={(e) => updateModalForm({ saveBonus: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => updateModalForm({ saveBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
                   <button
@@ -6342,26 +6498,26 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div className="text-xs mt-1">Conversion: 10 CP = 1 SP, 10 SP = 1 GP, 10 GP = 1 PP</div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">Copper</label>
+                      <label className="block text-sm text-gray-400 mb-1">Copper (CP)</label>
                       <DomStepper value={walletForm.cp} onChange={(v) => updateWalletForm({ cp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">Silver</label>
+                      <label className="block text-sm text-gray-400 mb-1">Silver (SP)</label>
                       <DomStepper value={walletForm.sp} onChange={(v) => updateWalletForm({ sp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">Gold</label>
+                      <label className="block text-sm text-gray-400 mb-1">Gold (GP)</label>
                       <DomStepper value={walletForm.gp} onChange={(v) => updateWalletForm({ gp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400 mb-1">Platinum</label>
+                      <label className="block text-sm text-gray-400 mb-1">Platinum (PP)</label>
                       <DomStepper value={walletForm.pp} onChange={(v) => updateWalletForm({ pp: v })} step={1} min={0} allowManual />
                     </div>
                   </div>
 
-                  <div className="space-y-2 mt-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
                     <button
                       onClick={() => {
                         const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
@@ -6372,9 +6528,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         resetWalletForm();
 }}
-                      className="w-full py-2 bg-green-600 rounded hover:bg-green-700"
+                      className="py-3 bg-green-600 rounded hover:bg-green-700 font-semibold"
                     >
-                      Add to Wallet
+                      Add
                     </button>
 
                     <button
@@ -6392,9 +6548,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         resetWalletForm();
 }}
-                      className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
+                      className="py-3 bg-red-600 rounded hover:bg-red-700 font-semibold"
                     >
-                      Spend from Wallet
+                      Spend
                     </button>
                   </div>
 
@@ -6608,7 +6764,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         value={itemForm.acBonus}
-                        onChange={(e) => updateItemForm({ acBonus: parseInt(e.target.value) || 0 })}
+                        onChange={(e) => updateItemForm({ acBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                       <div className="text-xs text-gray-400 mt-1">
@@ -6626,7 +6782,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             type="number"
                             min="1"
                             value={itemWeaponDamageNumDice}
-                            onChange={(e) => setItemWeaponDamageNumDice(Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
+                            onChange={(e) => setItemWeaponDamageNumDice(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
                           />
                         </div>
@@ -7061,7 +7217,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="number"
                     value={modalForms.spellAtk}
-                    onChange={(e) => updateModalForm({ spellAtk: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => updateModalForm({ spellAtk: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
                   <button
@@ -7116,7 +7272,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <label className="block text-sm mb-1">Item name</label>
                   <input
-                    id="magic-item-name"
+                    value={modalForms.magicItemName}
+                    onChange={(e) => updateModalForm({ magicItemName: e.target.value })}
                     className="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded"
                     placeholder="e.g., Scroll Case, Wand of Fireballs"
                     autoFocus
@@ -7125,11 +7282,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <label className="block text-sm mb-1">Number of spells (capacity)</label>
                   <input
-                    id="magic-item-capacity"
+                    value={modalForms.magicItemCapacity}
+                    onChange={(e) => updateModalForm({ magicItemCapacity: e.target.value })}
                     type="number"
                     min={1}
                     className="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded"
-                    defaultValue={5}
                   />
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
@@ -7141,9 +7298,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </button>
                   <button
                     onClick={() => {
-                      const name = (document.getElementById('magic-item-name') || {}).value || '';
-                      const capRaw = (document.getElementById('magic-item-capacity') || {}).value;
-                      const capacity = Math.max(1, parseInt(capRaw || '0', 10) || 1);
+                      const name = modalForms.magicItemName || '';
+                      const capacity = Math.max(1, parseInt(modalForms.magicItemCapacity || '5', 10) || 1);
                       if (!name.trim()) return;
                       const newItem = { id: String(Date.now()), name: name.trim(), capacity, spells: [] };
                       updateChar({ magicItems: [...magicItems, newItem] });
@@ -7299,9 +7455,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="text"
                     placeholder="e.g., Fireball, Magic Missile"
-                    defaultValue={editModal.spell?.name || ''}
+                    value={spellForm.name}
+                    onChange={(e) => updateSpellForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="spell-name"
                   />
                   
                   <label className="block text-sm text-gray-400 mb-1">Spell Level (0-9)</label>
@@ -7309,17 +7465,17 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     type="number"
                     min="0"
                     max="9"
-                    defaultValue={editModal.spell?.level || 0}
+                    value={spellForm.level}
+                    onChange={(e) => updateSpellForm({ level: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="spell-level"
                   />
                   
                   <label className="block text-sm text-gray-400 mb-1">Description</label>
                   <textarea
                     placeholder="Spell effect..."
-                    defaultValue={editModal.spell?.description || ''}
+                    value={spellForm.description}
+                    onChange={(e) => updateSpellForm({ description: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3 h-20"
-                    id="spell-desc"
                   />
                   
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -7328,9 +7484,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., 1 action"
-                        defaultValue={editModal.spell?.prepTime || ''}
+                        value={spellForm.prepTime}
+                        onChange={(e) => updateSpellForm({ prepTime: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="spell-prep"
                       />
                     </div>
                     <div>
@@ -7338,9 +7494,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., 60 ft"
-                        defaultValue={editModal.spell?.range || ''}
+                        value={spellForm.range}
+                        onChange={(e) => updateSpellForm({ range: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="spell-range"
                       />
                     </div>
                   </div>
@@ -7374,9 +7530,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., Instantaneous"
-                        defaultValue={editModal.spell?.duration || ''}
+                        value={spellForm.duration}
+                        onChange={(e) => updateSpellForm({ duration: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="spell-duration"
                       />
                     </div>
                     <div>
@@ -7384,9 +7540,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., 30 ft radius"
-                        defaultValue={editModal.spell?.aoe || ''}
+                        value={spellForm.aoe}
+                        onChange={(e) => updateSpellForm({ aoe: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="spell-aoe"
                       />
                     </div>
                   </div>
@@ -7396,9 +7552,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <input
                       type="text"
                       placeholder="e.g., Dex half"
-                      defaultValue={editModal.spell?.savingThrow || ''}
+                      value={spellForm.savingThrow}
+                      onChange={(e) => updateSpellForm({ savingThrow: e.target.value })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      id="spell-save"
                     />
                   </div>
                   
@@ -7406,9 +7562,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        defaultChecked={editModal.spell?.spellResistance || false}
+                        checked={spellForm.spellResistance}
+                        onChange={(e) => updateSpellForm({ spellResistance: e.target.checked })}
                         className="w-4 h-4"
-                        id="spell-resist"
                       />
                       <span className="text-sm font-bold">Spell Resistance</span>
                     </label>
@@ -7419,9 +7575,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="flex items-center gap-2 mb-2">
                       <input
                         type="checkbox"
-                        defaultChecked={editModal.spell?.hasDiceRoll || false}
+                        checked={spellForm.hasDiceRoll}
+                        onChange={(e) => updateSpellForm({ hasDiceRoll: e.target.checked })}
                         className="w-4 h-4"
-                        id="spell-hasdice"
                       />
                       <span className="text-sm">Has Dice Roll</span>
                     </label>
@@ -7430,9 +7586,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., d6"
-                        defaultValue={editModal.spell?.diceType || ''}
+                        value={spellForm.diceType}
+                        onChange={(e) => updateSpellForm({ diceType: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white text-sm"
-                        id="spell-dicetype"
                       />
                     </div>
                   </div>
@@ -7442,27 +7598,27 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="flex items-center gap-2 mb-2">
                       <input
                         type="checkbox"
-                        defaultChecked={editModal.spell?.verbal || false}
+                        checked={spellForm.verbal}
+                        onChange={(e) => updateSpellForm({ verbal: e.target.checked })}
                         className="w-4 h-4"
-                        id="spell-verbal"
                       />
                       <span className="text-sm">Verbal</span>
                     </label>
                     <label className="flex items-center gap-2 mb-2">
                       <input
                         type="checkbox"
-                        defaultChecked={editModal.spell?.somatic || false}
+                        checked={spellForm.somatic}
+                        onChange={(e) => updateSpellForm({ somatic: e.target.checked })}
                         className="w-4 h-4"
-                        id="spell-somatic"
                       />
                       <span className="text-sm">Somatic</span>
                     </label>
                     <label className="flex items-center gap-2 mb-2">
                       <input
                         type="checkbox"
-                        defaultChecked={editModal.spell?.material || false}
+                        checked={spellForm.material}
+                        onChange={(e) => updateSpellForm({ material: e.target.checked })}
                         className="w-4 h-4"
-                        id="spell-material"
                       />
                       <span className="text-sm">Material</span>
                     </label>
@@ -7471,9 +7627,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         placeholder="e.g., a bit of bat fur"
-                        defaultValue={editModal.spell?.materialDesc || ''}
+                        value={spellForm.materialDesc}
+                        onChange={(e) => updateSpellForm({ materialDesc: e.target.value })}
                         className="w-full p-2 bg-gray-700 rounded text-white text-sm"
-                        id="spell-material-desc"
                       />
                     </div>
                   </div>
@@ -7482,21 +7638,21 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const newSpell = {
                         id: editModal.spell?.id || Date.now(),
-                        name: document.getElementById('spell-name').value,
-                        level: parseInt(document.getElementById('spell-level').value) || 0,
-                        description: document.getElementById('spell-desc').value,
-                        prepTime: document.getElementById('spell-prep').value,
-                        range: document.getElementById('spell-range').value,
-                        duration: document.getElementById('spell-duration').value,
-                        aoe: document.getElementById('spell-aoe').value,
-                        savingThrow: document.getElementById('spell-save').value,
-                        spellResistance: document.getElementById('spell-resist').checked,
-                        hasDiceRoll: document.getElementById('spell-hasdice').checked,
-                        diceType: document.getElementById('spell-dicetype').value,
-                        verbal: document.getElementById('spell-verbal').checked,
-                        somatic: document.getElementById('spell-somatic').checked,
-                        material: document.getElementById('spell-material').checked,
-                        materialDesc: document.getElementById('spell-material-desc')?.value || ''
+                        name: spellForm.name,
+                        level: spellForm.level,
+                        description: spellForm.description,
+                        prepTime: spellForm.prepTime,
+                        range: spellForm.range,
+                        duration: spellForm.duration,
+                        aoe: spellForm.aoe,
+                        savingThrow: spellForm.savingThrow,
+                        spellResistance: spellForm.spellResistance,
+                        hasDiceRoll: spellForm.hasDiceRoll,
+                        diceType: spellForm.diceType,
+                        verbal: spellForm.verbal,
+                        somatic: spellForm.somatic,
+                        material: spellForm.material,
+                        materialDesc: spellForm.materialDesc
                       };
 
                       const newSpells = editModal.type === 'newSpell' ? 
@@ -7537,9 +7693,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
 
                   <label className="block text-sm text-gray-400 mb-1">Choose Spell (from Spells Learned)</label>
-                  <select id="magic-item-spell-select" className="w-full p-2 bg-gray-700 rounded text-white">
+                  <select 
+                    value={modalForms.magicItemSpellSelect}
+                    onChange={(e) => updateModalForm({ magicItemSpellSelect: e.target.value })}
+                    className="w-full p-2 bg-gray-700 rounded text-white"
+                  >
                     <option value="">-- Select a spell --</option>
-                    {(char.spellsLearned || []).slice().sort(sortSpellsLevelName).map((s) => (
+                    {sortedSpellsLearned.map((s) => (
                       <option key={s.id || s.name} value={s.name}>
                         L{s.level ?? 0} {s.name}
                       </option>
@@ -7557,16 +7717,21 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Copies</label>
                       <input
-                        id="magic-item-spell-copies"
                         type="number"
                         min={1}
-                        defaultValue={1}
+                        value={modalForms.magicItemSpellCopies}
+                        onChange={(e) => updateModalForm({ magicItemSpellCopies: e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
                     <div className="flex items-end">
                       <label className="inline-flex items-center gap-2 text-sm text-gray-200">
-                        <input id="magic-item-spell-permanent" type="checkbox" className="w-4 h-4" />
+                        <input 
+                          type="checkbox" 
+                          checked={modalForms.magicItemSpellPermanent}
+                          onChange={(e) => updateModalForm({ magicItemSpellPermanent: e.target.checked })}
+                          className="w-4 h-4" 
+                        />
                         <span>Permanent (once per day)</span>
                       </label>
                     </div>
@@ -7575,16 +7740,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => {
-                        const sel = String((document.getElementById('magic-item-spell-select') || {}).value || '').trim();
+                        const sel = modalForms.magicItemSpellSelect.trim();
                         const spell = (char.spellsLearned || []).find((x) => x.name === sel);
                         if (!spell) {
                           showGameAlert('Add Spell', 'Please select a spell from Spells Learned (or add a new spell first).');
                           return;
                         }
-                        const copiesRaw = (document.getElementById('magic-item-spell-copies') || {}).value;
-                        const copies = Math.max(1, parseInt(copiesRaw || '1', 10) || 1);
-                        const permanent = !!(document.getElementById('magic-item-spell-permanent') || {}).checked;
-                        addSpellEntriesToMagicItem(editModal.itemId, { ...spell }, copies, permanent);
+                        addSpellEntriesToMagicItem(editModal.itemId, { ...spell }, modalForms.magicItemSpellCopies, modalForms.magicItemSpellPermanent);
                         setEditModal(null);
                       }}
                       className="flex-1 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
@@ -7604,7 +7766,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               {editModal.type === 'editMagicItemSpell' && (
                 <div className="space-y-3 max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   {(() => {
-                    const learnedSorted = (char.spellsLearned || []).slice().sort(sortSpellsLevelName);
+                    const learnedSorted = sortedSpellsLearned;
                     const selectedName = String(editModal.selectedSpellName || editModal.spellName || '');
                     const selectedSpell =
                       learnedSorted.find((s) => String(s?.name || '') === selectedName) ||
@@ -7631,17 +7793,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Copies</label>
                             <input
-                              id="mi-copies"
                               type="number"
                               min={1}
                               max={99}
-                              defaultValue={Number(editModal.copies || 1)}
+                              value={miSpellForm.copies}
+                              onChange={(e) => updateMiSpellForm({ copies: e.target.value === '' ? '' : Math.max(1, Math.min(99, parseInt(e.target.value) || 1)) })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
                           <div className="flex items-end">
                             <label className="inline-flex items-center gap-2 text-sm text-gray-300">
-                              <input id="mi-permanent" type="checkbox" defaultChecked={!!editModal.permanent} className="w-4 h-4" />
+                              <input 
+                                type="checkbox" 
+                                checked={miSpellForm.permanent}
+                                onChange={(e) => updateMiSpellForm({ permanent: e.target.checked })}
+                                className="w-4 h-4" 
+                              />
                               <span>Permanent (once per day)</span>
                             </label>
                           </div>
@@ -7653,26 +7820,26 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         <label className="block text-sm text-gray-400 mb-1">Spell Name</label>
                         <input
-                          id="mi-spell-name"
                           type="text"
-                          defaultValue={selectedSpell?.name || ''}
+                          value={miSpellForm.name}
+                          onChange={(e) => updateMiSpellForm({ name: e.target.value })}
                           className="w-full p-2 bg-gray-700 rounded text-white"
                         />
 
                         <label className="block text-sm text-gray-400 mb-1">Spell Level (0-9)</label>
                         <input
-                          id="mi-spell-level"
                           type="number"
                           min="0"
                           max="9"
-                          defaultValue={Number(selectedSpell?.level ?? 0)}
+                          value={miSpellForm.level}
+                          onChange={(e) => updateMiSpellForm({ level: Math.max(0, Math.min(9, e.target.value === '' ? '' : (parseInt(e.target.value) || 0))) })}
                           className="w-full p-2 bg-gray-700 rounded text-white"
                         />
 
                         <label className="block text-sm text-gray-400 mb-1">Description</label>
                         <textarea
-                          id="mi-spell-desc"
-                          defaultValue={selectedSpell?.description || ''}
+                          value={miSpellForm.description}
+                          onChange={(e) => updateMiSpellForm({ description: e.target.value })}
                           className="w-full p-2 bg-gray-700 rounded text-white h-20"
                         />
 
@@ -7680,36 +7847,36 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Prep Time</label>
                             <input
-                              id="mi-spell-preptime"
                               type="text"
-                              defaultValue={selectedSpell?.prepTime || ''}
+                              value={miSpellForm.prepTime}
+                              onChange={(e) => updateMiSpellForm({ prepTime: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Duration</label>
                             <input
-                              id="mi-spell-duration"
                               type="text"
-                              defaultValue={selectedSpell?.duration || ''}
+                              value={miSpellForm.duration}
+                              onChange={(e) => updateMiSpellForm({ duration: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Range</label>
                             <input
-                              id="mi-spell-range"
                               type="text"
-                              defaultValue={selectedSpell?.range || ''}
+                              value={miSpellForm.range}
+                              onChange={(e) => updateMiSpellForm({ range: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">AoE</label>
                             <input
-                              id="mi-spell-aoe"
                               type="text"
-                              defaultValue={selectedSpell?.aoe || ''}
+                              value={miSpellForm.aoe}
+                              onChange={(e) => updateMiSpellForm({ aoe: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
@@ -7719,18 +7886,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Saving Throw</label>
                             <input
-                              id="mi-spell-save"
                               type="text"
-                              defaultValue={selectedSpell?.savingThrow || ''}
+                              value={miSpellForm.savingThrow}
+                              onChange={(e) => updateMiSpellForm({ savingThrow: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
                           <div className="flex items-end">
                             <label className="inline-flex items-center gap-2 text-sm text-gray-300">
                               <input
-                                id="mi-spell-sr"
                                 type="checkbox"
-                                defaultChecked={!!selectedSpell?.spellResistance}
+                                checked={miSpellForm.spellResistance}
+                                onChange={(e) => updateMiSpellForm({ spellResistance: e.target.checked })}
                                 className="w-4 h-4"
                               />
                               <span>Spell Resistance</span>
@@ -7742,9 +7909,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div className="flex items-end">
                             <label className="inline-flex items-center gap-2 text-sm text-gray-300">
                               <input
-                                id="mi-spell-hasdice"
                                 type="checkbox"
-                                defaultChecked={!!selectedSpell?.hasDiceRoll}
+                                checked={miSpellForm.hasDiceRoll}
+                                onChange={(e) => updateMiSpellForm({ hasDiceRoll: e.target.checked })}
                                 className="w-4 h-4"
                               />
                               <span>Has Dice Roll</span>
@@ -7753,9 +7920,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Dice Type (e.g. d4, d6)</label>
                             <input
-                              id="mi-spell-dicetype"
                               type="text"
-                              defaultValue={selectedSpell?.diceType || ''}
+                              value={miSpellForm.diceType}
+                              onChange={(e) => updateMiSpellForm({ diceType: e.target.value })}
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
                           </div>
@@ -7768,22 +7935,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               const oldName = editModal.spellName;
                               const oldPermanent = !!editModal.originalPermanent;
 
-                              const copies = Math.max(1, Math.min(99, Number((document.getElementById('mi-copies'))?.value) || 1));
-                              const newPermanent = !!(document.getElementById('mi-permanent'))?.checked;
+                              const copies = miSpellForm.copies;
+                              const newPermanent = miSpellForm.permanent;
 
                               const updatedSpell = {
                                 ...(selectedSpell || {}),
-                                name: String((document.getElementById('mi-spell-name'))?.value || selectedSpell?.name || ''),
-                                level: Math.max(0, Math.min(9, Number((document.getElementById('mi-spell-level'))?.value) || 0)),
-                                description: String((document.getElementById('mi-spell-desc'))?.value || ''),
-                                prepTime: String((document.getElementById('mi-spell-preptime'))?.value || ''),
-                                duration: String((document.getElementById('mi-spell-duration'))?.value || ''),
-                                range: String((document.getElementById('mi-spell-range'))?.value || ''),
-                                aoe: String((document.getElementById('mi-spell-aoe'))?.value || ''),
-                                savingThrow: String((document.getElementById('mi-spell-save'))?.value || ''),
-                                spellResistance: !!(document.getElementById('mi-spell-sr'))?.checked,
-                                hasDiceRoll: !!(document.getElementById('mi-spell-hasdice'))?.checked,
-                                diceType: String((document.getElementById('mi-spell-dicetype'))?.value || ''),
+                                name: miSpellForm.name || selectedSpell?.name || '',
+                                level: miSpellForm.level,
+                                description: miSpellForm.description,
+                                prepTime: miSpellForm.prepTime,
+                                duration: miSpellForm.duration,
+                                range: miSpellForm.range,
+                                aoe: miSpellForm.aoe,
+                                savingThrow: miSpellForm.savingThrow,
+                                spellResistance: miSpellForm.spellResistance,
+                                hasDiceRoll: miSpellForm.hasDiceRoll,
+                                diceType: miSpellForm.diceType,
                               };
 
                               // 1) update spellsLearned
@@ -7854,9 +8021,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         </div>
 
                         <label className="block text-sm text-gray-400 mb-1">Choose Spell (from Spells Learned)</label>
-                        <select id="grimoire-spell-select" className="w-full p-2 bg-gray-700 rounded text-white mb-2">
+                        <select 
+                          value={modalForms.grimoireSpellSelect}
+                          onChange={(e) => updateModalForm({ grimoireSpellSelect: e.target.value })}
+                          className="w-full p-2 bg-gray-700 rounded text-white mb-2"
+                        >
                           <option value="">-- Select a spell --</option>
-                          {(char.spellsLearned || []).slice().sort(sortSpellsLevelName).map(s => {
+                          {sortedSpellsLearned.map(s => {
                             const cost = spellPointCost(s.level);
                             const disabled = cost > pointsLeft;
                             return (
@@ -7873,7 +8044,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         <button
                           onClick={() => {
-                            const spellId = parseInt(document.getElementById('grimoire-spell-select').value);
+                            const spellId = parseInt(modalForms.grimoireSpellSelect);
                             if (!spellId) { alert('Select a spell.'); return; }
                             const spell = (char.spellsLearned || []).find(s => s.id === spellId);
                             if (!spell) { alert('Spell not found.'); return; }
@@ -7896,26 +8067,26 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="text"
                     placeholder="e.g., Fluffy, Shadow"
-                    defaultValue={editModal.companion?.name || ''}
+                    value={companionForm.name}
+                    onChange={(e) => updateCompanionForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="comp-name"
                   />
                   
                   <label className="block text-sm text-gray-400 mb-1">Species</label>
                   <input
                     type="text"
                     placeholder="e.g., Wolf, Hawk, Horse"
-                    defaultValue={editModal.companion?.species || ''}
+                    value={companionForm.species}
+                    onChange={(e) => updateCompanionForm({ species: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="comp-species"
                   />
                   
                   <label className="block text-sm text-gray-400 mb-1">Description</label>
                   <textarea
                     placeholder="Physical description, personality..."
-                    defaultValue={editModal.companion?.description || ''}
+                    value={companionForm.description}
+                    onChange={(e) => updateCompanionForm({ description: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3 h-20"
-                    id="comp-desc"
                   />
                   
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -7923,18 +8094,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">Current HP</label>
                       <input
                         type="number"
-                        defaultValue={editModal.companion?.hp || 10}
+                        value={companionForm.hp}
+                        onChange={(e) => updateCompanionForm({ hp: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="comp-hp"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Max HP</label>
                       <input
                         type="number"
-                        defaultValue={editModal.companion?.maxHp || 10}
+                        value={companionForm.maxHp}
+                        onChange={(e) => updateCompanionForm({ maxHp: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="comp-maxhp"
                       />
                     </div>
                   </div>
@@ -7944,18 +8115,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">AC</label>
                       <input
                         type="number"
-                        defaultValue={editModal.companion?.ac || 10}
+                        value={companionForm.ac}
+                        onChange={(e) => updateCompanionForm({ ac: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="comp-ac"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Ground Speed (ft)</label>
                       <input
                         type="number"
-                        defaultValue={editModal.companion?.groundSpeed || 30}
+                        value={companionForm.groundSpeed}
+                        onChange={(e) => updateCompanionForm({ groundSpeed: e.target.value === '' ? '' : (parseInt(e.target.value) || 30) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="comp-ground"
                       />
                     </div>
                   </div>
@@ -7963,22 +8134,29 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-1">Flying Speed (ft, 0 if none)</label>
                   <input
                     type="number"
-                    defaultValue={editModal.companion?.flySpeed || 0}
+                    value={companionForm.flySpeed}
+                    onChange={(e) => updateCompanionForm({ flySpeed: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="comp-fly"
                   />
                   
                   <div className="mb-3">
                     <label className="block text-sm font-bold text-gray-300 mb-2">Save Bonuses</label>
                     <div className="grid grid-cols-2 gap-2">
-                      {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(attr => (
-                        <div key={attr}>
-                          <label className="block text-xs text-gray-400 mb-1">{attr.toUpperCase()}</label>
+                      {[
+                        { key: 'str', label: 'STR', field: 'saveStr' },
+                        { key: 'dex', label: 'DEX', field: 'saveDex' },
+                        { key: 'con', label: 'CON', field: 'saveCon' },
+                        { key: 'int', label: 'INT', field: 'saveInt' },
+                        { key: 'wis', label: 'WIS', field: 'saveWis' },
+                        { key: 'cha', label: 'CHA', field: 'saveCha' }
+                      ].map(({ key, label, field }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-gray-400 mb-1">{label}</label>
                           <input
                             type="number"
-                            defaultValue={editModal.companion?.saves?.[attr]?.bonus || 0}
+                            value={companionForm[field]}
+                            onChange={(e) => updateCompanionForm({ [field]: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                             className="w-full p-2 bg-gray-700 rounded text-white"
-                            id={`comp-save-${attr}`}
                           />
                         </div>
                       ))}
@@ -7989,21 +8167,21 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const newComp = {
                         id: editModal.companion?.id || Date.now(),
-                        name: document.getElementById('comp-name').value,
-                        species: document.getElementById('comp-species').value,
-                        description: document.getElementById('comp-desc').value,
-                        hp: parseInt(document.getElementById('comp-hp').value) || 10,
-                        maxHp: parseInt(document.getElementById('comp-maxhp').value) || 10,
-                        ac: parseInt(document.getElementById('comp-ac').value) || 10,
-                        groundSpeed: parseInt(document.getElementById('comp-ground').value) || 30,
-                        flySpeed: parseInt(document.getElementById('comp-fly').value) || 0,
+                        name: companionForm.name,
+                        species: companionForm.species,
+                        description: companionForm.description,
+                        hp: companionForm.hp,
+                        maxHp: companionForm.maxHp,
+                        ac: companionForm.ac,
+                        groundSpeed: companionForm.groundSpeed,
+                        flySpeed: companionForm.flySpeed,
                         saves: {
-                          str: { bonus: parseInt(document.getElementById('comp-save-str').value) || 0 },
-                          dex: { bonus: parseInt(document.getElementById('comp-save-dex').value) || 0 },
-                          con: { bonus: parseInt(document.getElementById('comp-save-con').value) || 0 },
-                          int: { bonus: parseInt(document.getElementById('comp-save-int').value) || 0 },
-                          wis: { bonus: parseInt(document.getElementById('comp-save-wis').value) || 0 },
-                          cha: { bonus: parseInt(document.getElementById('comp-save-cha').value) || 0 }
+                          str: { bonus: companionForm.saveStr },
+                          dex: { bonus: companionForm.saveDex },
+                          con: { bonus: companionForm.saveCon },
+                          int: { bonus: companionForm.saveInt },
+                          wis: { bonus: companionForm.saveWis },
+                          cha: { bonus: companionForm.saveCha }
                         },
                         attacks: editModal.companion?.attacks || []
                       };
@@ -8055,9 +8233,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="text"
                     placeholder="e.g., Bite, Claw"
-                    defaultValue={editModal.attack?.name || ''}
+                    value={compAttackForm.name}
+                    onChange={(e) => updateCompAttackForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="catk-name"
                   />
                   
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -8066,18 +8244,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         min={0}
-                        defaultValue={editModal.attack?.numDice ?? 1}
+                        value={compAttackForm.numDice}
+                        onChange={(e) => updateCompAttackForm({ numDice: e.target.value === '' ? '' : (parseInt(e.target.value) || 1) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-numdice"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.dieType || 6}
+                        value={compAttackForm.dieType}
+                        onChange={(e) => updateCompAttackForm({ dieType: e.target.value === '' ? '' : (parseInt(e.target.value) || 6) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-dietype"
                       />
                     </div>
                   </div>
@@ -8087,18 +8265,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">BTH (Base To Hit)</label>
                       <input
                         type="number"
-                        defaultValue={((editModal.attack?.bthBonus ?? editModal.attack?.bth) || 0)}
+                        value={compAttackForm.bth}
+                        onChange={(e) => updateCompAttackForm({ bth: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-bth"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Modifier</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.mod || 0}
+                        value={compAttackForm.mod}
+                        onChange={(e) => updateCompAttackForm({ mod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-mod"
                       />
 
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -8106,18 +8284,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">To-Hit Magic</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.toHitMagic || 0}
+                        value={compAttackForm.toHitMagic}
+                        onChange={(e) => updateCompAttackForm({ toHitMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-tohitmagic"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">To-Hit Misc</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.toHitMisc || 0}
+                        value={compAttackForm.toHitMisc}
+                        onChange={(e) => updateCompAttackForm({ toHitMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-tohitmisc"
                       />
                     </div>
                   </div>
@@ -8128,9 +8306,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-1">Damage Bonus</label>
                   <input
                     type="number"
-                    defaultValue={editModal.attack?.damageBonus || 0}
+                    value={compAttackForm.damageBonus}
+                    onChange={(e) => updateCompAttackForm({ damageBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="catk-dmgbonus"
                   />
 
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -8138,18 +8316,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">Damage Magic</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.damageMagic || 0}
+                        value={compAttackForm.damageMagic}
+                        onChange={(e) => updateCompAttackForm({ damageMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-dmgmagic"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Damage Misc</label>
                       <input
                         type="number"
-                        defaultValue={editModal.attack?.damageMisc || 0}
+                        value={compAttackForm.damageMisc}
+                        onChange={(e) => updateCompAttackForm({ damageMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="catk-dmgmisc"
                       />
                     </div>
                   </div>
@@ -8159,16 +8337,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const newAttack = {
                         id: editModal.attack?.id || Date.now(),
                         isFavorite: !!editModal.attack?.isFavorite,
-                        name: document.getElementById('catk-name').value,
-                        numDice: parseInt(document.getElementById('catk-numdice').value) || 1,
-                        dieType: parseInt(document.getElementById('catk-dietype').value) || 6,
-                        bth: parseInt(document.getElementById('catk-bth').value) || 0,
-                        mod: parseInt(document.getElementById('catk-mod').value) || 0,
-                        toHitMagic: parseInt(document.getElementById('catk-tohitmagic').value) || 0,
-                        toHitMisc: parseInt(document.getElementById('catk-tohitmisc').value) || 0,
-                        damageBonus: parseInt(document.getElementById('catk-dmgbonus').value) || 0,
-                        damageMagic: parseInt(document.getElementById('catk-dmgmagic').value) || 0,
-                        damageMisc: parseInt(document.getElementById('catk-dmgmisc').value) || 0
+                        name: compAttackForm.name,
+                        numDice: compAttackForm.numDice,
+                        dieType: compAttackForm.dieType,
+                        bth: compAttackForm.bth,
+                        mod: compAttackForm.mod,
+                        toHitMagic: compAttackForm.toHitMagic,
+                        toHitMisc: compAttackForm.toHitMisc,
+                        damageBonus: compAttackForm.damageBonus,
+                        damageMagic: compAttackForm.damageMagic,
+                        damageMisc: compAttackForm.damageMisc
                       };
                       
                       const updatedCompanion = { ...editModal.companion };
@@ -8216,9 +8394,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="text"
                     placeholder="e.g., Longsword, Compound Bow"
-                    defaultValue={editModal.attack?.name || ''}
+                    value={attackForm.name}
+                    onChange={(e) => updateAttackForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-2"
-                    id="atk-name"
                   />
 
                   {/* Manual attacks: choose melee/ranged so we can default the correct attribute mod */}
@@ -8226,21 +8404,17 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div className="mb-3">
                       <label className="block text-sm text-gray-400 mb-1">Attack Type</label>
                       <select
-                        id="atk-weaponmode"
-                        value={editModal.attack?.weaponMode || 'melee'}
+                        value={attackForm.weaponMode}
                         onChange={(e) => {
                           const mode = e.target.value;
-                          const existingAttr = Number((editModal.attack || {}).attrMod || 0) || 0;
-                          const existingDmg = Number((editModal.attack || {}).damageMod || 0) || 0;
+                          updateAttackForm({ weaponMode: mode });
                           setEditModal({
                             ...editModal,
                             attack: {
                               ...(editModal.attack || {}),
                               weaponMode: mode,
-                              // attrMod and damageMod are treated as EXTRA modifiers.
-                              // Ability mods are computed live based on weaponMode.
-                              attrMod: existingAttr,
-                              damageMod: existingDmg
+                              attrMod: attackForm.attrMod,
+                              damageMod: attackForm.damageMod
                             }
                           });
                         }}
@@ -8257,50 +8431,39 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="inline-flex items-center gap-2 text-sm text-gray-300">
                         <input
                           type="checkbox"
-                          defaultChecked={(() => {
-                            const v = editModal.attack?.useDamageDice;
-                            if (typeof v === 'boolean') return v;
-                            const nd = editModal.attack?.numDice;
-                            return (Number(nd ?? 1) > 0);
-                          })()}
-                          id="atk-usedice"
+                          checked={attackForm.useDamageDice}
+                          onChange={(e) => updateAttackForm({ useDamageDice: e.target.checked })}
                         />
                         Uses damage dice
                       </label>
                     </div>
 
-                    {(() => {
-                      const v = editModal.attack?.useDamageDice;
-                      const nd = editModal.attack?.numDice;
-                      const uses = (typeof v === 'boolean') ? v : (Number(nd ?? 1) > 0);
-                      if (!uses) return null;
-                      return (
-                        <>
-                          <div>
-                            <label className="block text-sm text-gray-400 mb-1">Number of Dice</label>
-                            <input
-                              type="number"
-                              min={1}
-                              defaultValue={Math.max(1, Number(editModal.attack?.numDice ?? 1))}
-                              className="w-full p-2 bg-gray-700 rounded text-white"
-                              id="atk-numdice"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
-                            <select
-                              defaultValue={editModal.attack?.dieType || 8}
-                              className="w-full p-2 bg-gray-700 rounded text-white"
-                              id="atk-dietype"
-                            >
-                              {[2,3,4,6,8,10,12].map(d => (
-                                <option key={d} value={d}>d{d}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </>
-                      );
-                    })()}
+                    {attackForm.useDamageDice && (
+                      <>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Number of Dice</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={attackForm.numDice}
+                            onChange={(e) => updateAttackForm({ numDice: e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1) })}
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
+                          <select
+                            value={attackForm.dieType}
+                            onChange={(e) => updateAttackForm({ dieType: parseInt(e.target.value) || 8 })}
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          >
+                            {[2,3,4,6,8,10,12].map(d => (
+                              <option key={d} value={d}>d{d}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="border-t border-blue-500 pt-3 mb-3">
@@ -8308,41 +8471,41 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-xs text-gray-400 mb-1">BTH (Base To Hit)</label>
                     <input
                       type="number"
-                      defaultValue={editModal.attack?.bth || 0}
+                      value={attackForm.bth}
+                      onChange={(e) => updateAttackForm({ bth: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
-                      id="atk-bth"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Mod (Attribute Modifier)</label>
                     <input
                       type="number"
-                      defaultValue={editModal.attack?.attrMod || 0}
+                      value={attackForm.attrMod}
+                      onChange={(e) => updateAttackForm({ attrMod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
-                      id="atk-mod"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Magic</label>
                     <input
                       type="number"
-                      defaultValue={editModal.attack?.magic || 0}
+                      value={attackForm.magic}
+                      onChange={(e) => updateAttackForm({ magic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
-                      id="atk-magic"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Misc</label>
                     <input
                       type="number"
-                      defaultValue={editModal.attack?.misc || 0}
+                      value={attackForm.misc}
+                      onChange={(e) => updateAttackForm({ misc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      id="atk-misc"
                     />
                   </div>
 
                   <div className="border-t border-red-500 pt-3">
                     <div className="font-bold text-red-400 mb-2">DAMAGE BONUSES</div>
                     <label className="block text-xs text-gray-400 mb-1">Mod (Attribute Modifier)</label>
-                    <DomStepper id="dmg-mod" defaultValue={ editModal.attack?.damageMod || 0 } step={1} className="mb-2" />
+                    <DomStepper value={attackForm.damageMod} onChange={(v) => updateAttackForm({ damageMod: v })} step={1} className="mb-2" />
                     <label className="block text-xs text-gray-400 mb-1">Magic</label>
-                    <DomStepper id="dmg-magic" defaultValue={ editModal.attack?.damageMagic || 0 } step={1} className="mb-2" />
+                    <DomStepper value={attackForm.damageMagic} onChange={(v) => updateAttackForm({ damageMagic: v })} step={1} className="mb-2" />
                     <label className="block text-xs text-gray-400 mb-1">Misc</label>
-                    <DomStepper id="dmg-misc" defaultValue={ editModal.attack?.damageMisc || 0 } step={1} className="mb-2" />
+                    <DomStepper value={attackForm.damageMisc} onChange={(v) => updateAttackForm({ damageMisc: v })} step={1} className="mb-2" />
                   </div>
 
                                     <div className="border-t border-gray-700 pt-3 mt-3">
@@ -8405,32 +8568,20 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         ...existing,
                         ...editModal.attack,
                         id: editModal.attack?.id || existing.id || Date.now(),
-                        name: (document.getElementById('atk-name')?.value ?? existing.name ?? ''),
-                        numDice: (() => {
-                        const useDice = !!document.getElementById('atk-usedice')?.checked;
-                        if (!useDice) return 0;
-                        const raw = document.getElementById('atk-numdice')?.value;
-                        const n = parseInt(String(raw ?? '1'), 10);
-                        return Number.isFinite(n) && n > 0 ? n : 1;
-                      })(),
-                        dieType: (() => {
-                        const useDice = !!document.getElementById('atk-usedice')?.checked;
-                        if (!useDice) return 0;
-                        const raw = document.getElementById('atk-dietype')?.value;
-                        const n = parseInt(String(raw ?? '8'), 10);
-                        return Number.isFinite(n) && n > 0 ? n : 8;
-                      })(),
-                        useDamageDice: !!document.getElementById('atk-usedice')?.checked,
-                        weaponMode: (document.getElementById('atk-weaponmode')?.value || existing.weaponMode || editModal.attack?.weaponMode || 'melee'),
-                        autoMods: (editModal.attack?.autoMods ?? existing.autoMods ?? (!!(editModal.attack?.weaponId || existing.weaponId) || ['melee','ranged'].includes(String(document.getElementById('atk-weaponmode')?.value || existing.weaponMode || editModal.attack?.weaponMode || 'melee')))),
-                        bthBonus: parseInt(document.getElementById('atk-bth')?.value || '0', 10) || 0,
-                        bth: parseInt(document.getElementById('atk-bth')?.value || '0', 10) || 0,
-                        attrMod: parseInt(document.getElementById('atk-mod')?.value || String(existing.attrMod ?? 0), 10) || 0,
-                        magic: parseInt(document.getElementById('atk-magic')?.value || '0', 10) || 0,
-                        misc: parseInt(document.getElementById('atk-misc')?.value || '0', 10) || 0,
-                        damageMod: parseInt(document.getElementById('dmg-mod')?.value || String(existing.damageMod ?? 0), 10) || 0,
-                        damageMagic: parseInt(document.getElementById('dmg-magic')?.value || '0', 10) || 0,
-                        damageMisc: parseInt(document.getElementById('dmg-misc')?.value || '0', 10) || 0,
+                        name: attackForm.name || existing.name || '',
+                        numDice: attackForm.useDamageDice ? attackForm.numDice : 0,
+                        dieType: attackForm.useDamageDice ? attackForm.dieType : 0,
+                        useDamageDice: attackForm.useDamageDice,
+                        weaponMode: attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee',
+                        autoMods: (editModal.attack?.autoMods ?? existing.autoMods ?? (!!(editModal.attack?.weaponId || existing.weaponId) || ['melee','ranged'].includes(attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee'))),
+                        bthBonus: attackForm.bth,
+                        bth: attackForm.bth,
+                        attrMod: attackForm.attrMod,
+                        magic: attackForm.magic,
+                        misc: attackForm.misc,
+                        damageMod: attackForm.damageMod,
+                        damageMagic: attackForm.damageMagic,
+                        damageMisc: attackForm.damageMisc,
                         appliedEffectItemIds
                       };
                       const newAtks = editModal.type === 'newAttack' ? 
