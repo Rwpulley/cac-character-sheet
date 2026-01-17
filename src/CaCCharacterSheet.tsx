@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Plus, Minus, Edit2, X, Trash2, Download, Upload } from 'lucide-react';
 
 // ===== LOCAL STORAGE PERSISTENCE =====
@@ -87,11 +87,11 @@ const calcMod = (value) => {
   if (value <= 21) return 4;
   if (value <= 23) return 5;
   if (value <= 25) return 6;
-  if (value <= 28) return 7;
-  if (value <= 29) return 9;
-  return 10;
+  if (value <= 27) return 7;
+  if (value === 28) return 8;
+  if (value === 29) return 9;
+  return 10; // 30+
 };
-
 
 function clamp(n, min, max) {
   if (min != null && n < min) return min;
@@ -100,12 +100,15 @@ function clamp(n, min, max) {
 }
 
 /**
- * Touch-friendly numeric control that stays compatible with existing save handlers
- * that read document.getElementById(id).value.
+ * Touch-friendly numeric control that supports both:
+ * 1. Legacy mode: uses hidden input with id for document.getElementById access
+ * 2. Controlled mode: uses value/onChange props like a standard React input
  */
 function DomStepper({
   id,
   defaultValue = 0,
+  value: controlledValue,
+  onChange: onChangeCallback,
   step = 1,
   min = null,
   max = null,
@@ -115,12 +118,24 @@ function DomStepper({
   allowManual = false,
   resetToken = 0,
 }) {
-  const [val, setVal] = useState(Number(defaultValue) || 0);
+  // Use controlled mode if value prop is provided
+  const isControlled = controlledValue !== undefined;
+  const [internalVal, setInternalVal] = useState(Number(defaultValue) || 0);
+  
+  const val = isControlled ? controlledValue : internalVal;
+  const setVal = isControlled 
+    ? (newVal) => {
+        const computed = typeof newVal === 'function' ? newVal(val) : newVal;
+        onChangeCallback?.(computed);
+      }
+    : setInternalVal;
 
   useEffect(() => {
-    setVal(Number(defaultValue) || 0);
+    if (!isControlled) {
+      setInternalVal(Number(defaultValue) || 0);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultValue, id, resetToken]);
+  }, [defaultValue, id, resetToken, isControlled]);
 
   const dec = () => setVal((v) => clamp((Number(v) || 0) - step, min, max));
   const inc = () => setVal((v) => clamp((Number(v) || 0) + step, min, max));
@@ -138,14 +153,12 @@ function DomStepper({
 
       {allowManual ? (
 
-
         <input
           type="text"
           inputMode="numeric"
           value={String(val)}
           onChange={(e) => {
             const raw = String(e.target.value || '');
-            // Keep digits and an optional leading '-' (for mods).
             const cleaned = raw.replace(/(?!^)-/g, '').replace(/[^\d-]/g, '');
             const next = parseInt(cleaned, 10);
             setVal(Number.isFinite(next) ? next : 0);
@@ -153,18 +166,13 @@ function DomStepper({
           className="min-w-[6rem] w-full text-center text-lg font-semibold bg-gray-800 rounded-lg h-12 px-2"
         />
 
-
       ) : (
-
 
         <div className="min-w-[6rem] text-center text-lg font-semibold bg-gray-800 rounded-lg h-12 flex items-center justify-center px-2">
 
-
           {valuePrefix}{val}{valueSuffix}
 
-
         </div>
-
 
       )}
 
@@ -177,12 +185,11 @@ function DomStepper({
         +
       </button>
 
-      <input type="number" id={id} value={val} readOnly className="hidden" />
+      {/* Hidden input for legacy getElementById access - only rendered if id is provided */}
+      {id && <input type="number" id={id} value={val} readOnly className="hidden" />}
     </div>
   );
 }
-
-
 
 const getUnarmedAttackName = (attacks) => {
   const count = (attacks || []).filter(a => (a?.name || '').startsWith('Unarmed Attack')).length;
@@ -209,10 +216,6 @@ const getBoundAttackName = (attack, inventory) => {
   const modeLabel = mode === 'ranged' ? 'Ranged' : 'Melee';
   return `${baseName} (${modeLabel})`;
 };
-
-
-
-
 
 // ===== Inventory Item Effects (attack/AC boosters that remain attached to the item) =====
 const ensureEquippedEffectShape = (char) => {
@@ -271,14 +274,26 @@ const normalizeItemEffects = (item) => {
   
   // If the item uses the Attribute Bonus system to grant AC, expose it as an AC effect
   // so it can be equipped via AC Tracking -> Defense Items.
-  if (item?.hasAttrBonus && String(item.attrBonusAttr || '').toLowerCase() === 'ac') {
-    const v = Number(item.attrBonusValue) || 0;
-    if (v !== 0) {
+  // Check the new attrBonuses array first, then fall back to legacy single fields
+  if (item?.hasAttrBonus) {
+    const bonusesArr = Array.isArray(item.attrBonuses) ? item.attrBonuses : [];
+    const acBonus = bonusesArr.find(b => String(b?.attr || '').toLowerCase() === 'ac');
+    if (acBonus && (Number(acBonus.value) || 0) !== 0) {
       normalized.push({
         id: `attrbonus-ac-${item?.id || 'item'}`,
         kind: 'ac',
-        ac: v
+        ac: Number(acBonus.value) || 0
       });
+    } else if (!bonusesArr.length && String(item.attrBonusAttr || '').toLowerCase() === 'ac') {
+      // Legacy fallback
+      const v = Number(item.attrBonusValue) || 0;
+      if (v !== 0) {
+        normalized.push({
+          id: `attrbonus-ac-${item?.id || 'item'}`,
+          kind: 'ac',
+          ac: v
+        });
+      }
     }
   }
 
@@ -365,9 +380,14 @@ const sumEffectAC = (char) => {
 const createNewCharacter = () => ({
   id: Date.now(),
   name: "New Character",
-  race: "", raceDetails: "",
-  class1: "", class1Level: 1, class1Details: "",
-  class2: "", class2Level: 0, class2Details: "",
+  race: "", 
+  raceDetails: "",
+  class1: "", 
+  class1Level: 1, 
+  class1Details: "",
+  class2: "", 
+  class2Level: 0, 
+  class2Details: "",
   classAbilities: [],
   advantages: [],
   raceAbilities: [],
@@ -375,17 +395,24 @@ const createNewCharacter = () => ({
   languages: '',
   deity: '',
   holySymbol: '',
-  alignment: '',
-  languages: '',
-  deity: '',
-  holySymbol: '',
   raceAttributeMods: [],
-  speed: 30, hp: 0, maxHp: 0,
-  acBase: 10, acShield: 0, acMod: 0, acMagic: 0, acMisc: 0, acBonus: 0,
-  equippedArmorIds: [], equippedShieldId: null,
+  speed: 30, 
+  hp: 0, 
+  maxHp: 0,
+  acBase: 10, 
+  // Notes tab
+  notes: [],
+  acShield: 0, 
+  acMod: 0, 
+  acMagic: 0, 
+  acMisc: 0, 
+  acBonus: 0,
+  equippedArmorIds: [], 
+  equippedShieldId: null,
   equippedAttrBonuses: { str: [], dex: [], con: [], int: [], wis: [], cha: [] },
   equippedEffectItemIds: { attack: [], unarmed: [], ac: [] },
-  bth: 0, currentXp: 0,
+  bth: 0, 
+  currentXp: 0,
   attributes: {
     str: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
     dex: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
@@ -397,9 +424,20 @@ const createNewCharacter = () => ({
   xpTable: [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000],
   hpByLevel: [0, 0, 0],
   hpDie: 12,
-  attacks: [], inventory: [], moneyGP: 0, spells: [], spellsStolen: [], grimoires: [], magicItems: [], pets: [], advantages: [],
-  initiativeMod: 0, primeSaveBonus: 6, attackBonus: 0,
-  baseBth: 0, damageBonus: 0, saveBonus: 0,
+  attacks: [], 
+  inventory: [], 
+  moneyGP: 0, 
+  spells: [], 
+  spellsStolen: [], 
+  grimoires: [], 
+  magicItems: [], 
+  pets: [],
+  initiativeMod: 0, 
+  primeSaveBonus: 6, 
+  attackBonus: 0,
+  baseBth: 0, 
+  damageBonus: 0, 
+  saveBonus: 0,
   companions: [],
   spellSlots: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   spellsLearned: [],
@@ -408,13 +446,19 @@ const createNewCharacter = () => ({
   spellAttackBonus: 0
 });
 
-
-
 export default function CaCCharacterSheet() {
   const [characters, setCharacters] = useState([]);
   const [currentCharIndex, setCurrentCharIndex] = useState(null);
   const [activeTab, setActiveTab] = useState('main');
   const [editModal, setEditModal] = useState(null);
+
+  // Notes tab editor
+  const [noteEditor, setNoteEditor] = useState({
+    open: false,
+    noteId: null,
+    title: '',
+    description: ''
+  });
   
   const [walletReset, setWalletReset] = useState(0);
 const [hpLevelsShown, setHpLevelsShown] = useState(3);
@@ -439,55 +483,407 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [invCopies, setInvCopies] = useState(1);
   const [invPermanent, setInvPermanent] = useState(false);
 
-  // Inventory item flags (used in Add/Edit Item modal)
-  const [itemIsArmor, setItemIsArmor] = useState(false);
-  const [itemIsShield, setItemIsShield] = useState(false);
-  const [itemHasAttrBonus, setItemHasAttrBonus] = useState(false);
-  const [itemIsMagicCasting, setItemIsMagicCasting] = useState(false);
-  const [itemIsGrimoire, setItemIsGrimoire] = useState(false);
-  const [itemMagicCastingDescription, setItemMagicCastingDescription] = useState('');
-  const [itemMagicCastingCapacity, setItemMagicCastingCapacity] = useState(0);
-  const [itemMagicCastingCapacityText, setItemMagicCastingCapacityText] = useState('');
-  // Item effects (attack/AC bonuses that stay attached to the item)
-  const [itemHasEffects, setItemHasEffects] = useState(false);
-  const [itemEffects, setItemEffects] = useState([]);
-  const [newEffectKind, setNewEffectKind] = useState('attack'); // attack | ac
-  // Attack effect splits into Misc vs Magic, matching your attack model
-  const [newEffectMiscToHit, setNewEffectMiscToHit] = useState(0);
-  const [newEffectMiscDamage, setNewEffectMiscDamage] = useState(0);
-  const [newEffectMagicToHit, setNewEffectMagicToHit] = useState(0);
-  const [newEffectMagicDamage, setNewEffectMagicDamage] = useState(0);
-  const [newEffectAC, setNewEffectAC] = useState(0);
-
-  const [itemAttrBonusAttr, setItemAttrBonusAttr] = useState('str');
-  const [itemAttrBonusValue, setItemAttrBonusValue] = useState(0);
-  const [itemAttrBonusValueText, setItemAttrBonusValueText] = useState('0');
-  const [itemStatBonuses, setItemStatBonuses] = useState([]);
-
-  const [itemIsWeapon, setItemIsWeapon] = useState(false);
-  const [itemWeaponType, setItemWeaponType] = useState('melee'); // legacy single type
-  const [itemWeaponMelee, setItemWeaponMelee] = useState(true);
-  const [itemWeaponRanged, setItemWeaponRanged] = useState(false);
-  const [itemWeaponToHitMagic, setItemWeaponToHitMagic] = useState(0);
-  const [itemWeaponToHitMisc, setItemWeaponToHitMisc] = useState(0);
-  const [itemWeaponDamageMagic, setItemWeaponDamageMagic] = useState(0);
-  const [itemWeaponDamageMisc, setItemWeaponDamageMisc] = useState(0);
-  const [itemWeaponDamageNumDice, setItemWeaponDamageNumDice] = useState(1);
-  const [itemWeaponDamageDieType, setItemWeaponDamageDieType] = useState(8);
-
-  // AC Tracking equipment selections (pulled from inventory)
-  const [equippedArmorIds, setEquippedArmorIds] = useState([]);
-  const [acUseDex, setAcUseDex] = useState(true);
-  const toggleEquippedArmor = (id) => {
-    setEquippedArmorIds((prev) => {
-      const sid = String(id);
-      return prev.includes(sid) ? prev.filter(x => x !== sid) : [...prev, sid];
-    });
+  // ===== CONSOLIDATED ITEM MODAL STATE =====
+  // Groups all item form fields into a single state object for cleaner code
+  const defaultItemModalState = {
+    // Item type flags
+    isArmor: false,
+    isShield: false,
+    hasAttrBonus: false,
+    isMagicCasting: false,
+    isGrimoire: false,
+    hasEffects: false,
+    isWeapon: false,
+    // Magic casting
+    magicCastingDescription: '',
+    magicCastingCapacity: 0,
+    magicCastingCapacityText: '',
+    // Effects
+    effects: [],
+    // Stat bonuses
+    attrBonusAttr: 'str',
+    attrBonusValue: 0,
+    attrBonusValueText: '0',
+    statBonuses: [],
+    // Weapon properties
+    weaponType: 'melee',
+    weaponMelee: true,
+    weaponRanged: false,
+    weaponToHitMagic: 0,
+    weaponToHitMisc: 0,
+    weaponDamageMagic: 0,
+    weaponDamageMisc: 0,
+    weaponDamageNumDice: 1,
+    weaponDamageDieType: 8
   };
-  const [equippedShieldId, setEquippedShieldId] = useState('');
-  const [equippedDefenseItemIds, setEquippedDefenseItemIds] = useState([]);
-  const [equippedSpeedItemIds, setEquippedSpeedItemIds] = useState([]);
-  const [attrEquippedIds, setAttrEquippedIds] = useState([]);
+  
+  const [itemModal, setItemModal] = useState(defaultItemModalState);
+  
+  // Helper to update specific item modal fields
+  const updateItemModal = useCallback((updates) => {
+    setItemModal(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  // Reset item modal to defaults
+  const resetItemModal = useCallback(() => {
+    setItemModal(defaultItemModalState);
+  }, []);
+
+  // ===== CONSOLIDATED NEW EFFECT STATE =====
+  const defaultNewEffectState = {
+    kind: 'attack',
+    miscToHit: 0,
+    miscDamage: 0,
+    magicToHit: 0,
+    magicDamage: 0,
+    ac: 0
+  };
+  
+  const [newEffect, setNewEffect] = useState(defaultNewEffectState);
+  
+  const updateNewEffect = useCallback((updates) => {
+    setNewEffect(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetNewEffect = useCallback(() => {
+    setNewEffect(defaultNewEffectState);
+  }, []);
+
+  // ===== CONSOLIDATED EQUIPMENT STATE =====
+  const [equipmentState, setEquipmentState] = useState({
+    armorIds: [],
+    shieldId: '',
+    defenseItemIds: [],
+    speedItemIds: [],
+    attrEquippedIds: [],
+    useDex: true
+  });
+  
+  const updateEquipment = useCallback((updates) => {
+    setEquipmentState(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  const toggleEquippedArmor = useCallback((id) => {
+    setEquipmentState(prev => {
+      const sid = String(id);
+      const armorIds = prev.armorIds.includes(sid) 
+        ? prev.armorIds.filter(x => x !== sid) 
+        : [...prev.armorIds, sid];
+      return { ...prev, armorIds };
+    });
+  }, []);
+
+  // Legacy individual setters for backward compatibility during migration
+  // These can be removed once all usages are updated
+  const setEquippedArmorIds = useCallback((ids) => updateEquipment({ armorIds: ids }), [updateEquipment]);
+  const setEquippedShieldId = useCallback((id) => updateEquipment({ shieldId: id }), [updateEquipment]);
+  const setEquippedDefenseItemIds = useCallback((ids) => updateEquipment({ defenseItemIds: ids }), [updateEquipment]);
+  const setEquippedSpeedItemIds = useCallback((ids) => updateEquipment({ speedItemIds: ids }), [updateEquipment]);
+  const setAttrEquippedIds = useCallback((ids) => updateEquipment({ attrEquippedIds: ids }), [updateEquipment]);
+  const setAcUseDex = useCallback((val) => updateEquipment({ useDex: val }), [updateEquipment]);
+  
+  // Legacy getters for backward compatibility
+  const equippedArmorIds = equipmentState.armorIds;
+  const equippedShieldId = equipmentState.shieldId;
+  const equippedDefenseItemIds = equipmentState.defenseItemIds;
+  const equippedSpeedItemIds = equipmentState.speedItemIds;
+  const attrEquippedIds = equipmentState.attrEquippedIds;
+  const acUseDex = equipmentState.useDex;
+
+  // Legacy item modal setters for backward compatibility
+  const itemIsArmor = itemModal.isArmor;
+  const itemIsShield = itemModal.isShield;
+  const itemHasAttrBonus = itemModal.hasAttrBonus;
+  const itemIsMagicCasting = itemModal.isMagicCasting;
+  const itemIsGrimoire = itemModal.isGrimoire;
+  const itemMagicCastingDescription = itemModal.magicCastingDescription;
+  const itemMagicCastingCapacity = itemModal.magicCastingCapacity;
+  const itemMagicCastingCapacityText = itemModal.magicCastingCapacityText;
+  const itemHasEffects = itemModal.hasEffects;
+  const itemEffects = itemModal.effects;
+  const itemAttrBonusAttr = itemModal.attrBonusAttr;
+  const itemAttrBonusValue = itemModal.attrBonusValue;
+  const itemAttrBonusValueText = itemModal.attrBonusValueText;
+  const itemStatBonuses = itemModal.statBonuses;
+  const itemIsWeapon = itemModal.isWeapon;
+  const itemWeaponType = itemModal.weaponType;
+  const itemWeaponMelee = itemModal.weaponMelee;
+  const itemWeaponRanged = itemModal.weaponRanged;
+  const itemWeaponToHitMagic = itemModal.weaponToHitMagic;
+  const itemWeaponToHitMisc = itemModal.weaponToHitMisc;
+  const itemWeaponDamageMagic = itemModal.weaponDamageMagic;
+  const itemWeaponDamageMisc = itemModal.weaponDamageMisc;
+  const itemWeaponDamageNumDice = itemModal.weaponDamageNumDice;
+  const itemWeaponDamageDieType = itemModal.weaponDamageDieType;
+
+  // Legacy item modal setters
+  const setItemIsArmor = useCallback((v) => updateItemModal({ isArmor: v }), [updateItemModal]);
+  const setItemIsShield = useCallback((v) => updateItemModal({ isShield: v }), [updateItemModal]);
+  const setItemHasAttrBonus = useCallback((v) => updateItemModal({ hasAttrBonus: v }), [updateItemModal]);
+  const setItemIsMagicCasting = useCallback((v) => updateItemModal({ isMagicCasting: v }), [updateItemModal]);
+  const setItemIsGrimoire = useCallback((v) => updateItemModal({ isGrimoire: v }), [updateItemModal]);
+  const setItemMagicCastingDescription = useCallback((v) => updateItemModal({ magicCastingDescription: v }), [updateItemModal]);
+  const setItemMagicCastingCapacity = useCallback((v) => updateItemModal({ magicCastingCapacity: v }), [updateItemModal]);
+  const setItemMagicCastingCapacityText = useCallback((v) => updateItemModal({ magicCastingCapacityText: v }), [updateItemModal]);
+  const setItemHasEffects = useCallback((v) => updateItemModal({ hasEffects: v }), [updateItemModal]);
+  const setItemEffects = useCallback((v) => updateItemModal({ effects: typeof v === 'function' ? v(itemModal.effects) : v }), [updateItemModal, itemModal.effects]);
+  const setItemAttrBonusAttr = useCallback((v) => updateItemModal({ attrBonusAttr: v }), [updateItemModal]);
+  const setItemAttrBonusValue = useCallback((v) => updateItemModal({ attrBonusValue: v }), [updateItemModal]);
+  const setItemAttrBonusValueText = useCallback((v) => updateItemModal({ attrBonusValueText: v }), [updateItemModal]);
+  const setItemStatBonuses = useCallback((v) => updateItemModal({ statBonuses: typeof v === 'function' ? v(itemModal.statBonuses) : v }), [updateItemModal, itemModal.statBonuses]);
+  const setItemIsWeapon = useCallback((v) => updateItemModal({ isWeapon: v }), [updateItemModal]);
+  const setItemWeaponType = useCallback((v) => updateItemModal({ weaponType: v }), [updateItemModal]);
+  const setItemWeaponMelee = useCallback((v) => updateItemModal({ weaponMelee: v }), [updateItemModal]);
+  const setItemWeaponRanged = useCallback((v) => updateItemModal({ weaponRanged: v }), [updateItemModal]);
+  const setItemWeaponToHitMagic = useCallback((v) => updateItemModal({ weaponToHitMagic: v }), [updateItemModal]);
+  const setItemWeaponToHitMisc = useCallback((v) => updateItemModal({ weaponToHitMisc: v }), [updateItemModal]);
+  const setItemWeaponDamageMagic = useCallback((v) => updateItemModal({ weaponDamageMagic: v }), [updateItemModal]);
+  const setItemWeaponDamageMisc = useCallback((v) => updateItemModal({ weaponDamageMisc: v }), [updateItemModal]);
+  const setItemWeaponDamageNumDice = useCallback((v) => updateItemModal({ weaponDamageNumDice: v }), [updateItemModal]);
+  const setItemWeaponDamageDieType = useCallback((v) => updateItemModal({ weaponDamageDieType: v }), [updateItemModal]);
+
+  // Legacy new effect setters
+  const newEffectKind = newEffect.kind;
+  const newEffectMiscToHit = newEffect.miscToHit;
+  const newEffectMiscDamage = newEffect.miscDamage;
+  const newEffectMagicToHit = newEffect.magicToHit;
+  const newEffectMagicDamage = newEffect.magicDamage;
+  const newEffectAC = newEffect.ac;
+  
+  const setNewEffectKind = useCallback((v) => updateNewEffect({ kind: v }), [updateNewEffect]);
+  const setNewEffectMiscToHit = useCallback((v) => updateNewEffect({ miscToHit: v }), [updateNewEffect]);
+  const setNewEffectMiscDamage = useCallback((v) => updateNewEffect({ miscDamage: v }), [updateNewEffect]);
+  const setNewEffectMagicToHit = useCallback((v) => updateNewEffect({ magicToHit: v }), [updateNewEffect]);
+  const setNewEffectMagicDamage = useCallback((v) => updateNewEffect({ magicDamage: v }), [updateNewEffect]);
+  const setNewEffectAC = useCallback((v) => updateNewEffect({ ac: v }), [updateNewEffect]);
+
+  // ===== MODAL FORM STATES =====
+  // These replace getElementById calls with controlled components
+  
+  // Simple text/number modal forms
+  const [modalForms, setModalForms] = useState({
+    // Race/Name/Class modals
+    race: '',
+    name: '',
+    class: '',
+    // Speed modal
+    speedBase: 0,
+    speedBonus: 0,
+    // HP modal
+    hpCurrent: 0,
+    hpDelta: 0,
+    hpBonus: 0,
+    // AC Tracking modal
+    acBase: 10,
+    acMod: 0,
+    acMagic: 0,
+    acMisc: 0,
+    acBonus: 0,
+    // XP modal
+    xpAdd: 0,
+    // Attribute modal
+    attrRolled: 10,
+    attrBonus: 0,
+    // Save modifier modal
+    saveModInput: 0,
+    // BTH modal
+    bthBase: 0,
+    // Bonus modifiers modal
+    attackBonus: 0,
+    damageBonus: 0,
+    // Save bonus modal
+    saveBonus: 0,
+    // Spell stats modal
+    spellDC: 10,
+    spellAtk: 0,
+    // Magic item modal
+    magicItemName: '',
+    magicItemCapacity: ''
+  });
+  
+  const updateModalForm = useCallback((updates) => {
+    setModalForms(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  // Wallet modal form
+  const [walletForm, setWalletForm] = useState({
+    cp: 0, sp: 0, gp: 0, pp: 0
+  });
+  
+  const updateWalletForm = useCallback((updates) => {
+    setWalletForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetWalletForm = useCallback(() => {
+    setWalletForm({ cp: 0, sp: 0, gp: 0, pp: 0 });
+  }, []);
+
+  // Spell form (for newSpell/editSpell modals)
+  const [spellForm, setSpellForm] = useState({
+    name: '',
+    level: 0,
+    description: '',
+    prepTime: '',
+    range: '',
+    duration: '',
+    aoe: '',
+    savingThrow: '',
+    spellResistance: false,
+    hasDiceRoll: false,
+    diceType: '',
+    diceBonus: 0,
+    verbal: false,
+    somatic: false,
+    material: false,
+    materialDesc: ''
+  });
+  
+  const updateSpellForm = useCallback((updates) => {
+    setSpellForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetSpellForm = useCallback(() => {
+    setSpellForm({
+      name: '', level: 0, description: '', prepTime: '', range: '', duration: '',
+      aoe: '', savingThrow: '', spellResistance: false, hasDiceRoll: false,
+      diceType: '', diceBonus: 0, verbal: false, somatic: false, material: false, materialDesc: ''
+    });
+  }, []);
+
+  // Companion form
+  const [companionForm, setCompanionForm] = useState({
+    name: '',
+    species: '',
+    description: '',
+    hp: 10,
+    maxHp: 10,
+    ac: 10,
+    groundSpeed: 30,
+    flySpeed: 0,
+    saveStr: 0,
+    saveDex: 0,
+    saveCon: 0,
+    saveInt: 0,
+    saveWis: 0,
+    saveCha: 0
+  });
+  
+  const updateCompanionForm = useCallback((updates) => {
+    setCompanionForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetCompanionForm = useCallback(() => {
+    setCompanionForm({
+      name: '', species: '', description: '', hp: 10, maxHp: 10, ac: 10,
+      groundSpeed: 30, flySpeed: 0, saveStr: 0, saveDex: 0, saveCon: 0,
+      saveInt: 0, saveWis: 0, saveCha: 0
+    });
+  }, []);
+
+  // Companion attack form
+  const [compAttackForm, setCompAttackForm] = useState({
+    name: '',
+    numDice: 1,
+    dieType: 6,
+    bth: 0,
+    mod: 0,
+    toHitMagic: 0,
+    toHitMisc: 0,
+    damageBonus: 0,
+    damageMagic: 0,
+    damageMisc: 0
+  });
+  
+  const updateCompAttackForm = useCallback((updates) => {
+    setCompAttackForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetCompAttackForm = useCallback(() => {
+    setCompAttackForm({
+      name: '', numDice: 1, dieType: 6, bth: 0, mod: 0, toHitMagic: 0,
+      toHitMisc: 0, damageBonus: 0, damageMagic: 0, damageMisc: 0
+    });
+  }, []);
+
+  // Attack form
+  const [attackForm, setAttackForm] = useState({
+    name: '',
+    useDamageDice: true,
+    numDice: 1,
+    dieType: 8,
+    weaponMode: 'melee',
+    bth: 0,
+    attrMod: 0,
+    magic: 0,
+    misc: 0,
+    damageMod: 0,
+    damageMagic: 0,
+    damageMisc: 0
+  });
+  
+  const updateAttackForm = useCallback((updates) => {
+    setAttackForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetAttackForm = useCallback(() => {
+    setAttackForm({
+      name: '', useDamageDice: true, numDice: 1, dieType: 8, weaponMode: 'melee',
+      bth: 0, attrMod: 0, magic: 0, misc: 0, damageMod: 0, damageMagic: 0, damageMisc: 0
+    });
+  }, []);
+
+  // Inventory item form (basic fields - flags handled by itemModal)
+  const [itemForm, setItemForm] = useState({
+    name: '',
+    description: '',
+    quantity: 1,
+    weightPer: 0,
+    ev: 0,
+    worth: 0,
+    worthUnit: 'gp',
+    acBonus: 0
+  });
+  
+  const updateItemForm = useCallback((updates) => {
+    setItemForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetItemForm = useCallback(() => {
+    setItemForm({
+      name: '', description: '', quantity: 1, weightPer: 0, ev: 0,
+      worth: 0, worthUnit: 'gp', acBonus: 0
+    });
+  }, []);
+
+  // Magic item spell form
+  const [miSpellForm, setMiSpellForm] = useState({
+    selectedSpellId: '',
+    copies: 1,
+    permanent: false,
+    name: '',
+    level: 0,
+    description: '',
+    prepTime: '',
+    duration: '',
+    range: '',
+    aoe: '',
+    savingThrow: '',
+    spellResistance: false,
+    hasDiceRoll: false,
+    diceType: ''
+  });
+  
+  const updateMiSpellForm = useCallback((updates) => {
+    setMiSpellForm(prev => ({ ...prev, ...updates }));
+  }, []);
+  
+  const resetMiSpellForm = useCallback(() => {
+    setMiSpellForm({
+      selectedSpellId: '', copies: 1, permanent: false, name: '', level: 0,
+      description: '', prepTime: '', duration: '', range: '', aoe: '',
+      savingThrow: '', spellResistance: false, hasDiceRoll: false, diceType: ''
+    });
+  }, []);
 
   // State for import file input
   const [importError, setImportError] = useState(null);
@@ -498,7 +894,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const loaded = loadFromLocalStorage();
     if (loaded && loaded.length > 0) {
       setCharacters(loaded);
-      console.log(`Loaded ${loaded.length} character(s) from localStorage`);
     }
   }, []);
 
@@ -558,6 +953,191 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   
   const char = currentCharIndex !== null ? characters[currentCharIndex] : null;
 
+  // ===== MEMOIZED CALCULATIONS =====
+  // These values are cached and only recalculated when their dependencies change
+  
+  // Helper function for normalizing item stat bonuses (used in memoized calcs)
+  const normalizeItemStatBonusesStatic = useCallback((it) => {
+    const arr = Array.isArray(it?.attrBonuses)
+      ? it.attrBonuses
+          .filter(b => b && typeof b === 'object')
+          .map(b => ({ attr: String(b.attr || '').toLowerCase(), value: Number(b.value) || 0 }))
+          .filter(b => b.attr && b.value !== 0)
+      : [];
+    if (arr.length) return arr;
+    const legacyAttr = String(it?.attrBonusAttr || '').toLowerCase();
+    const legacyVal = Number(it?.attrBonusValue) || 0;
+    return (legacyAttr && legacyVal !== 0) ? [{ attr: legacyAttr, value: legacyVal }] : [];
+  }, []);
+
+  // Memoized attribute totals - recalculated only when char data changes
+  const memoizedAttributeTotals = useMemo(() => {
+    if (!char) return { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+    
+    const calcAttrTotal = (attrKey) => {
+      const a = char.attributes?.[attrKey];
+      const rolled = Number.isFinite(a?.rolledScore) ? a.rolledScore : 10;
+      const bonusMod = Number.isFinite(a?.bonusMod) ? a.bonusMod : 0;
+      
+      // Race bonus
+      const raceMatch = (char.raceAttributeMods || []).find(x => String(x.attr).toLowerCase() === attrKey);
+      const raceBonus = raceMatch ? (Number(raceMatch.value) || 0) : 0;
+      
+      // Item bonus
+      const equipped = (char.equippedAttrBonuses?.[attrKey] || []).map(x => String(x));
+      let itemBonus = 0;
+      if (equipped.length) {
+        itemBonus = (char.inventory || []).reduce((sum, it) => {
+          if (!it?.hasAttrBonus || !equipped.includes(String(it.id))) return sum;
+          const qty = Number(it.quantity) || 1;
+          const bonuses = normalizeItemStatBonusesStatic(it);
+          const match = bonuses.find(b => b.attr === attrKey);
+          return match ? sum + ((Number(match.value) || 0) * qty) : sum;
+        }, 0);
+      }
+      
+      return rolled + raceBonus + bonusMod + itemBonus;
+    };
+    
+    return {
+      str: calcAttrTotal('str'),
+      dex: calcAttrTotal('dex'),
+      con: calcAttrTotal('con'),
+      int: calcAttrTotal('int'),
+      wis: calcAttrTotal('wis'),
+      cha: calcAttrTotal('cha')
+    };
+  }, [char?.attributes, char?.raceAttributeMods, char?.equippedAttrBonuses, char?.inventory, normalizeItemStatBonusesStatic]);
+
+  // Memoized encumbrance calculations
+  const memoizedEncumbrance = useMemo(() => {
+    if (!char) return { rating: 0, totalEV: 0, status: 'unburdened', speedPenalty: 0 };
+    
+    const strScore = memoizedAttributeTotals.str;
+    const strPrime = !!char.attributes?.str?.isPrime;
+    const conPrime = !!char.attributes?.con?.isPrime;
+    const rating = strScore + (strPrime ? 3 : 0) + (conPrime ? 3 : 0);
+    
+    const totalEV = (char.inventory || []).reduce((sum, it) => {
+      const qty = Number(it.quantity) || 1;
+      const ev = Number(it.ev) || 0;
+      return sum + (ev * qty);
+    }, 0);
+    
+    let status = 'unburdened';
+    if (rating > 0) {
+      if (totalEV > rating && totalEV <= (3 * rating)) status = 'burdened';
+      else if (totalEV > (3 * rating)) status = 'overburdened';
+    }
+    
+    // Calculate speed with encumbrance
+    const baseSpeed = Number(char.speed) || 0;
+    const speedBonus = Number(char.speedBonus) || 0;
+    const equippedSpeedIds = (char.equippedSpeedItemIds || []).map(x => String(x));
+    const itemSpeedBonus = (char.inventory || [])
+      .filter(it => it?.hasAttrBonus && equippedSpeedIds.includes(String(it.id)))
+      .reduce((sum, it) => {
+        const bonuses = normalizeItemStatBonusesStatic(it);
+        const match = bonuses.find(b => b.attr === 'speed');
+        if (!match) return sum;
+        const qty = Number(it.quantity) || 1;
+        return sum + ((Number(match.value) || 0) * qty);
+      }, 0);
+    const preEncumbranceSpeed = baseSpeed + speedBonus + itemSpeedBonus;
+    
+    let speedPenalty = 0;
+    if (status === 'burdened') speedPenalty = Math.min(10, Math.max(preEncumbranceSpeed - 5, 0));
+    else if (status === 'overburdened') speedPenalty = Math.max(preEncumbranceSpeed - 5, 0);
+    
+    const finalSpeed = status === 'unburdened' ? preEncumbranceSpeed : Math.max(preEncumbranceSpeed - speedPenalty, 5);
+    
+    return { rating, totalEV, status, speedPenalty, preEncumbranceSpeed, finalSpeed };
+  }, [char?.speed, char?.speedBonus, char?.equippedSpeedItemIds, char?.inventory, char?.attributes?.str?.isPrime, char?.attributes?.con?.isPrime, memoizedAttributeTotals.str, normalizeItemStatBonusesStatic]);
+
+  // Memoized AC calculation
+  const memoizedAC = useMemo(() => {
+    if (!char) return 10;
+    const base = char.acBase || 10;
+    
+    // Shield
+    let shield = 0;
+    if (char.equippedShieldId) {
+      const sItem = (char.inventory || []).find(i => String(i.id) === String(char.equippedShieldId));
+      shield = Number(sItem?.acBonus) || 0;
+    }
+    
+    // Armor
+    const armorIds = Array.isArray(char.equippedArmorIds) ? char.equippedArmorIds : (char.equippedArmorId ? [char.equippedArmorId] : []);
+    const armor = armorIds.reduce((sum, aid) => {
+      const aItem = (char.inventory || []).find(i => String(i.id) === String(aid));
+      return sum + (Number(aItem?.acBonus) || 0);
+    }, 0);
+    
+    // Dex mod (removed if overburdened)
+    let mod = (char.acModAuto !== false) ? calcMod(memoizedAttributeTotals.dex) : (char.acMod || 0);
+    if (memoizedEncumbrance.status === 'overburdened' && char.acModAuto !== false) mod = 0;
+    
+    const magic = char.acMagic || 0;
+    const misc = char.acMisc || 0;
+    const bonus = char.acBonus || 0;
+    
+    // Effect AC from equipped items
+    const equipped = ensureEquippedEffectShape(char);
+    const activeIds = new Set((equipped.ac || []).map(x => String(x)));
+    let effAC = 0;
+    for (const item of (char.inventory || [])) {
+      if (!activeIds.has(String(item.id))) continue;
+      for (const e of normalizeItemEffects(item)) {
+        if (e?.kind === 'ac') effAC += Number(e.ac) || 0;
+      }
+    }
+    
+    // Race AC bonus
+    const raceACMatch = (char.raceAttributeMods || []).find(x => String(x.attr).toLowerCase() === 'ac');
+    const raceAC = raceACMatch ? (Number(raceACMatch.value) || 0) : 0;
+    
+    return base + armor + shield + mod + magic + misc + raceAC + bonus + effAC;
+  }, [char?.acBase, char?.equippedShieldId, char?.equippedArmorIds, char?.equippedArmorId, char?.inventory, char?.acModAuto, char?.acMod, char?.acMagic, char?.acMisc, char?.acBonus, char?.equippedEffectItemIds, char?.raceAttributeMods, memoizedAttributeTotals.dex, memoizedEncumbrance.status]);
+
+  // Memoized XP/Level calculation
+  const memoizedLevelInfo = useMemo(() => {
+    if (!char) return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: 1 };
+    if (!Array.isArray(char.xpTable) || char.xpTable.length === 0) {
+      return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: (Number(char.class1Level) || 1) };
+    }
+    
+    let currentLevel = 1;
+    for (let i = char.xpTable.length - 1; i >= 0; i--) {
+      if (char.currentXp >= char.xpTable[i]) {
+        currentLevel = i + 1;
+        break;
+      }
+    }
+    
+    const nextLevelXp = char.xpTable[currentLevel] || char.xpTable[char.xpTable.length - 1];
+    const prevLevelXp = char.xpTable[currentLevel - 1] || 0;
+    const xpIntoLevel = char.currentXp - prevLevelXp;
+    const xpNeededForLevel = nextLevelXp - prevLevelXp;
+    const progress = xpNeededForLevel > 0 ? ((xpIntoLevel / xpNeededForLevel) * 100).toFixed(1) : 0;
+    
+    return { 
+      nextLevelXp, 
+      progress: Math.min(100, progress), 
+      canLevelUp: char.currentXp >= nextLevelXp,
+      currentLevel
+    };
+  }, [char?.xpTable, char?.currentXp, char?.class1Level]);
+
+  // Memoized max HP calculation
+  const memoizedMaxHP = useMemo(() => {
+    if (!char || !char.hpByLevel) return char?.maxHp || 0;
+    const levelHP = char.hpByLevel.reduce((sum, hp) => sum + hp, 0);
+    const bonusHP = char.hpBonus || 0;
+    return levelHP + bonusHP;
+  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp]);
+
+  // ===== END MEMOIZED CALCULATIONS =====
+
   // Attribute totals are computed from:
   // - Rolled Score (base)
   // - Bonus modifier (manual bless/curse/etc.)
@@ -576,7 +1156,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return raw.map(x => String(x));
   };
 
-
   const normalizeItemStatBonuses = (it) => {
     // New format: it.attrBonuses = [{ attr: 'str'|'dex'|...|'ac'|'speed', value: number }, ...]
     const arr = Array.isArray(it?.attrBonuses)
@@ -591,7 +1170,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const legacyVal = Number(it?.attrBonusValue) || 0;
     return (legacyAttr && legacyVal !== 0) ? [{ attr: legacyAttr, value: legacyVal }] : [];
   };
-
 
   const getItemAttributeBonus = (attrKey) => {
     if (!char) return 0;
@@ -623,7 +1201,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return match ? (Number(match.value) || 0) : 0;
   };
 
-
   const getItemAttributeSources = (attrKey) => {
     if (!char) return [];
     const equipped = getEquippedAttrIds(attrKey);
@@ -644,7 +1221,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       })
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
   };
-
 
   const getItemAttributeCandidates = (attrKey) => {
     if (!char) return [];
@@ -677,81 +1253,106 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return Number.isFinite(v) ? v : (Number(a?.bonusMod) || 0);
   };
 
+  // Use memoized attribute totals for performance
   const getAttributeTotal = (attrKey) => {
-    const rolled = getAttributeRolled(attrKey);
-    const race = getRaceAttributeBonus(attrKey);
-    const bonus = getAttributeBonusMod(attrKey);
-    const item = getItemAttributeBonus(attrKey);
-    return rolled + race + bonus + item;
+    return memoizedAttributeTotals[attrKey] ?? 10;
   };
 
-  const getEncumbranceRating = () => {
-    if (!char) return 0;
-    const strScore = Number(getAttributeTotal('str')) || 0;
-    const strPrime = !!char?.attributes?.str?.isPrime;
-    const conPrime = !!char?.attributes?.con?.isPrime;
-    return strScore + (strPrime ? 3 : 0) + (conPrime ? 3 : 0);
-  };
-
-  const getInventoryTotalEV = () => {
-    if (!char) return 0;
-    return (char.inventory || []).reduce((sum, it) => {
-      const qty = Number(it.quantity) || 1;
-      const ev = Number(it.ev) || 0;
-      return sum + (ev * qty);
-    }, 0);
-  };
-
-  const getEncumbranceStatus = () => {
-    const er = getEncumbranceRating();
-    const totalEV = getInventoryTotalEV();
-    if (er <= 0) return 'unburdened';
-    if (totalEV <= er) return 'unburdened';
-    if (totalEV <= (3 * er)) return 'burdened';
-    return 'overburdened';
-  };
+  // Use memoized encumbrance values
+  const getEncumbranceRating = () => memoizedEncumbrance.rating;
+  const getInventoryTotalEV = () => memoizedEncumbrance.totalEV;
+  const getEncumbranceStatus = () => memoizedEncumbrance.status;
 
   const getEncumbranceStatusLabel = () => {
-    const s = getEncumbranceStatus();
+    const s = memoizedEncumbrance.status;
     return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : '';
   };
 
-  const getSpeedPreEncumbrance = () => {
-    if (!char) return 0;
-    const base = Number(char.speed) || 0;
-    const bonus = Number(char.speedBonus) || 0;
-    const equipped = getEquippedSpeedIds();
-    const itemBonus = getItemAttributeCandidates('speed')
-      .filter(c => equipped.includes(String(c.id)))
-      .reduce((sum, c) => sum + (Number(c.total) || 0), 0);
-    return base + bonus + itemBonus;
-  };
-
-  const getEncumbranceSpeedPenalty = () => {
-    const pre = getSpeedPreEncumbrance();
-    const status = getEncumbranceStatus();
-    if (status === 'unburdened') return 0;
-    // Burdened: -10 ft, but never below 5 ft total.
-    if (status === 'burdened') return Math.min(10, Math.max(pre - 5, 0));
-    // Overburdened: force to 5 ft total.
-    return Math.max(pre - 5, 0);
-  };
-
-  const getSpeedTotal = () => {
-    const pre = getSpeedPreEncumbrance();
-    const penalty = getEncumbranceSpeedPenalty();
-    const status = getEncumbranceStatus();
-    if (status === 'unburdened') return pre;
-    return Math.max(pre - penalty, 5);
-  };
-
-
+  const getSpeedPreEncumbrance = () => memoizedEncumbrance.preEncumbranceSpeed || 0;
+  const getEncumbranceSpeedPenalty = () => memoizedEncumbrance.speedPenalty;
+  const getSpeedTotal = () => memoizedEncumbrance.finalSpeed || 0;
 
   // Keep modal-specific state in sync when opening different modals
   useEffect(() => {
     if (!editModal) return;
 
+    // Initialize simple text modals
+    if (editModal.type === 'race' && char) {
+      updateModalForm({ race: char.race || '' });
+    }
+    if (editModal.type === 'name' && char) {
+      updateModalForm({ name: char.name || '' });
+    }
+    if (editModal.type === 'class' && char) {
+      updateModalForm({ class: char.class1 || '' });
+    }
+    if (editModal.type === 'speed' && char) {
+      updateModalForm({ 
+        speedBase: Number(char.speed) || 0,
+        speedBonus: Number(char.speedBonus) || 0
+      });
+    }
+    if (editModal.type === 'hp' && char) {
+      updateModalForm({
+        hpCurrent: Number(char.hp) || 0,
+        hpDelta: 0
+      });
+    }
+    if (editModal.type === 'hpTracking' && char) {
+      updateModalForm({
+        hpBonus: Number(char.hpBonus) || 0
+      });
+    }
+    if (editModal.type === 'acTracking' && char) {
+      updateModalForm({
+        acBase: Number(char.acBase) || 10,
+        acMod: Number(char.acMod) || 0,
+        acMagic: Number(char.acMagic) || 0,
+        acMisc: Number(char.acMisc) || 0,
+        acBonus: Number(char.acBonus) || 0
+      });
+    }
+    if (editModal.type === 'addXp') {
+      updateModalForm({ xpAdd: 0 });
+    }
+    if (editModal.type === 'attribute' && char) {
+      const attr = char.attributes?.[editModal.attr];
+      updateModalForm({
+        attrRolled: Number(attr?.rolledScore) || 10,
+        attrBonus: Number(attr?.bonusMod) || 0
+      });
+    }
+    if (editModal.type === 'saveModifier' && char) {
+      const attr = char.attributes?.[editModal.attr];
+      updateModalForm({ saveModInput: Number(attr?.saveModifier) || 0 });
+    }
+    if (editModal.type === 'bthModal' && char) {
+      updateModalForm({ bthBase: Number(char.baseBth) || 0 });
+    }
+    if (editModal.type === 'bonusModifiers' && char) {
+      updateModalForm({
+        attackBonus: Number(char.attackBonus) || 0,
+        damageBonus: Number(char.damageBonus) || 0
+      });
+    }
+    if (editModal.type === 'saveModifiers' && char) {
+      updateModalForm({ saveBonus: Number(char.saveBonus) || 0 });
+    }
+    if (editModal.type === 'wallet') {
+      resetWalletForm();
+    }
+    if (editModal.type === 'spellStats' && char) {
+      updateModalForm({
+        spellDC: Number(char.spellSaveDC) || 10,
+        spellAtk: Number(char.spellAttackBonus) || 0
+      });
+    }
+    if (editModal.type === 'newMagicItem') {
+      updateModalForm({ magicItemName: '', magicItemCapacity: '' });
+    }
+
     if (editModal.type === 'newItem') {
+      resetItemForm();
       setItemIsArmor(false);
       setItemIsShield(false);
       setItemHasAttrBonus(false);
@@ -785,6 +1386,17 @@ setNewEffectMiscToHit(0);
       
     }
     if (editModal.type === 'editItem') {
+      // Initialize itemForm with item values
+      setItemForm({
+        name: editModal.item?.name || '',
+        description: editModal.item?.description || '',
+        quantity: Number(editModal.item?.quantity) || 1,
+        weightPer: Number(editModal.item?.weightPer) || 0,
+        ev: Number(editModal.item?.ev) || 0,
+        worth: editModal.item?.worthAmount ?? (editModal.item?.worthGP != null ? editModal.item.worthGP : 0),
+        worthUnit: editModal.item?.worthUnit || (editModal.item?.worthGP != null ? 'gp' : 'gp'),
+        acBonus: Number(editModal.item?.acBonus) || 0
+      });
       setItemIsArmor(!!editModal.item?.isArmor);
       setItemIsShield(!!editModal.item?.isShield);
       // Stat bonuses can include multiple bonuses (e.g., STR + DEX). Support both new array and legacy single fields.
@@ -856,10 +1468,8 @@ if (editModal.type === 'acTracking' && char) {
 
       setAcUseDex(char.acModAuto !== false);
 
-
     }
   }, [editModal, char]);
-
 
   // Permanent / used-today flags are tracked on grimoire *entries* (each entry is one "copy" of a spell).
   const hasAnyPermanent = !!char && (char.grimoires || []).some(g => (g.entries || []).some(e => !!e.permanent));
@@ -940,7 +1550,6 @@ if (editModal.type === 'acTracking' && char) {
 
     updateChar({ grimoires: newGrimoires, magicItems: newMagicItems });
   };
-
 
   const addSpellToGrimoire = (grimoireId, spell) => {
     const g = (char.grimoires || []).find(x => x.id === grimoireId);
@@ -1025,7 +1634,6 @@ if (editModal.type === 'acTracking' && char) {
     return list;
   };
 
-
   const addMagicItem = () => {
     setEditModal({ type: 'newMagicItem' });
   };
@@ -1096,7 +1704,6 @@ if (editModal.type === 'acTracking' && char) {
     });
   };
 
-
   const castFromMagicItem = (itemId, spellName, permanent) => {
     const item = magicItems.find((i) => i.id === itemId);
     if (!item) return;
@@ -1134,8 +1741,6 @@ if (editModal.type === 'acTracking' && char) {
       }),
     });
   };
-
-
 
   const buildSpellPropagationUpdates = (updatedSpell) => {
     if (!char || !updatedSpell) return {};
@@ -1196,8 +1801,67 @@ if (editModal.type === 'acTracking' && char) {
     updateChar({ equippedEffectItemIds: { ...cur, [section]: next } });
   };
 
-
     setCharacters(newChars);
+  };
+
+  // --------------------
+  // Notes tab helpers
+  // --------------------
+  const getNotes = () => (Array.isArray(char?.notes) ? char.notes : []);
+
+  const openNewNote = () => {
+    setNoteEditor({ open: true, noteId: null, title: '', description: '' });
+  };
+
+  const openEditNote = (note) => {
+    setNoteEditor({
+      open: true,
+      noteId: note?.id ?? null,
+      title: String(note?.title || ''),
+      description: String(note?.description || '')
+    });
+  };
+
+  const cancelNoteEdit = () => {
+    setNoteEditor({ open: false, noteId: null, title: '', description: '' });
+  };
+
+  const saveNote = () => {
+    if (!char) return;
+    const title = String(noteEditor.title || '').trim();
+    const description = String(noteEditor.description || '').trim();
+    if (!title && !description) return;
+
+    const now = Date.now();
+    const existing = getNotes();
+
+    // Edit existing
+    if (noteEditor.noteId != null) {
+      const updated = existing.map((n) =>
+        n.id === noteEditor.noteId ? { ...n, title, description, updatedAt: now } : n
+      );
+      updateChar({ notes: updated });
+      cancelNoteEdit();
+      return;
+    }
+
+    // Add new
+    const newNote = {
+      id: now,
+      title,
+      description,
+      createdAt: now,
+      updatedAt: now
+    };
+    updateChar({ notes: [newNote, ...existing] });
+    cancelNoteEdit();
+  };
+
+  const deleteNote = (noteId) => {
+    if (!char) return;
+    const existing = getNotes();
+    updateChar({ notes: existing.filter((n) => n.id !== noteId) });
+    if (noteEditor.open && noteEditor.noteId === noteId) cancelNoteEdit();
   };
 
   const deleteCharacter = (index) => {
@@ -1211,81 +1875,42 @@ if (editModal.type === 'acTracking' && char) {
     });
   };
 
+  // Use memoized level info
   const getTotalLevel = () => {
     if (!char) return 1;
-    // Prefer XP-based leveling when xpTable is present
     if (Array.isArray(char.xpTable) && typeof char.currentXp === 'number') {
-      return calculateNextLevel().currentLevel;
+      return memoizedLevelInfo.currentLevel;
     }
     return (Number(char.class1Level) || 0) + (Number(char.class2Level) || 0) || 1;
   };
 
-  const calculateMaxHP = () => {
-    if (!char || !char.hpByLevel) return char?.maxHp || 0;
-    const levelHP = char.hpByLevel.reduce((sum, hp) => sum + hp, 0);
-    const bonusHP = char.hpBonus || 0;
-    return levelHP + bonusHP;
-  };
+  // Use memoized max HP
+  const calculateMaxHP = () => memoizedMaxHP;
 
-  const calculateAC = () => {
-    if (!char) return 10;
-    const base = char.acBase || 10;
+  // Use memoized AC
+  const calculateAC = () => memoizedAC;
 
-    // Shield is selected from inventory (or none)
-    let shield = 0;
-    if (char.equippedShieldId) {
-      const sItem = (char.inventory || []).find(i => String(i.id) === String(char.equippedShieldId));
-      shield = Number(sItem?.acBonus) || 0;
-    }
+  // Use memoized level info
+  const calculateNextLevel = () => memoizedLevelInfo;
 
-    // Armor is selected from inventory (or none)
-    let armor = 0;
-    const armorIds = (char.equippedArmorIds && Array.isArray(char.equippedArmorIds))
-      ? char.equippedArmorIds
-      : (char.equippedArmorId ? [char.equippedArmorId] : []);
-    if (armorIds.length) {
-      armor = armorIds.reduce((sum, aid) => {
-        const aItem = (char.inventory || []).find(i => String(i.id) === String(aid));
-        return sum + (Number(aItem?.acBonus) || 0);
-      }, 0);
-    }
-
-    let mod = (char.acModAuto !== false) ? calcMod(getAttributeTotal('dex')) : (char.acMod || 0);
-    // Encumbrance: if overburdened, Dex is removed from AC (only when using auto DEX mod)
-    if (getEncumbranceStatus() === 'overburdened' && (char.acModAuto !== false)) {
-      mod = 0;
-    }
-    const magic = char.acMagic || 0;
-    const misc = char.acMisc || 0;
-    const bonus = char.acBonus || 0;
-    const effAC = sumEffectAC(char);
-    const raceAC = getRaceACBonus();
-    return base + armor + shield + mod + magic + misc + raceAC + bonus + effAC;
-  };
-
-  const calculateNextLevel = () => {
-    if (!char) return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: 1 };
-    
-    let currentLevel = 1;
-    for (let i = char.xpTable.length - 1; i >= 0; i--) {
-      if (char.currentXp >= char.xpTable[i]) {
-        currentLevel = i + 1;
-        break;
+  // XP-derived level helper (used on the character list screen so it always matches XP).
+  // If xpTable/currentXp isn't present (older saves), fall back to stored class1Level.
+  const getXpDerivedLevel = (ch) => {
+    try {
+      const table = Array.isArray(ch?.xpTable) ? ch.xpTable : null;
+      const xp = Number(ch?.currentXp ?? ch?.xp ?? 0) || 0;
+      if (!table || table.length === 0) return Number(ch?.class1Level) || 1;
+      let lvl = 1;
+      for (let i = table.length - 1; i >= 0; i--) {
+        if (xp >= Number(table[i] || 0)) {
+          lvl = i + 1;
+          break;
+        }
       }
+      return lvl;
+    } catch {
+      return Number(ch?.class1Level) || 1;
     }
-    
-    const nextLevelXp = char.xpTable[currentLevel] || char.xpTable[char.xpTable.length - 1];
-    const prevLevelXp = char.xpTable[currentLevel - 1] || 0;
-    const xpIntoLevel = char.currentXp - prevLevelXp;
-    const xpNeededForLevel = nextLevelXp - prevLevelXp;
-    const progress = ((xpIntoLevel / xpNeededForLevel) * 100).toFixed(1);
-    
-    return { 
-      nextLevelXp, 
-      progress: Math.min(100, progress), 
-      canLevelUp: char.currentXp >= nextLevelXp,
-      currentLevel
-    };
   };
 
   if (currentCharIndex === null) {
@@ -1345,7 +1970,7 @@ if (editModal.type === 'acTracking' && char) {
               >
                 <div className="text-xl font-bold">{c.name}</div>
                 <div className="text-gray-400">
-                  {c.race} {c.class1} {c.class1Level}{c.class2 && ` / ${c.class2} ${c.class2Level}`}
+                  {c.race} {c.class1} {getXpDerivedLevel(c)}{c.class2 && ` / ${c.class2} ${c.class2Level}`}
                 </div>
               </button>
               <button 
@@ -1411,14 +2036,8 @@ if (editModal.type === 'acTracking' && char) {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
 
-      {/* Header with Back Button and Save Status */}
-      <div className="max-w-4xl mx-auto mb-2 flex items-center justify-between">
-        <button 
-          onClick={() => { setCurrentCharIndex(null); setActiveTab('main'); }} 
-          className="px-4 py-2 bg-gray-700 rounded hover:bg-gray-600"
-        >
-          ← Characters
-        </button>
+      {/* Header with Save Status */}
+      <div className="max-w-4xl mx-auto mb-2 flex items-center justify-end">
         <div className="text-sm">
           {saveStatus === 'saving' && <span className="text-yellow-400">Saving...</span>}
           {saveStatus === 'saved' && <span className="text-green-400">✓ Saved</span>}
@@ -1435,7 +2054,8 @@ if (editModal.type === 'acTracking' && char) {
             { id: 'inventory', label: 'Inventory' },
             { id: 'magic', label: 'Magic' },
             { id: 'dice', label: 'Dice' },
-            { id: 'companion', label: 'Companion' }
+            { id: 'companion', label: 'Companion' },
+            { id: 'notes', label: 'Notes' }
           ].map(({ id, label }) => (
             <button
               key={id}
@@ -1522,7 +2142,6 @@ if (editModal.type === 'acTracking' && char) {
                       });
                       setHpDraftRolls(rolls);
 
-
                       let lastFilled = -1;
                       for (let i = 0; i < rolls.length; i++) { if ((parseInt(rolls[i] || '0', 10) || 0) > 0) lastFilled = i; }
                       const effectiveLen = Math.max(3, lastFilled + 1);
@@ -1552,7 +2171,7 @@ if (editModal.type === 'acTracking' && char) {
                   <button onClick={() => setEditModal({ type: 'xpTable' })} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
                     Level XP
                   </button>
-                  <button onClick={() => setEditModal({ type: 'addXp' })} className="px-4 py-2 text-base text-base bg-blue-600 rounded text-sm hover:bg-blue-700">
+                  <button onClick={() => setEditModal({ type: 'addXp' })} className="px-4 py-2 text-base bg-blue-600 rounded text-sm hover:bg-blue-700">
                     Add XP
                   </button>
                 </div>
@@ -1685,7 +2304,6 @@ if (editModal.type === 'acTracking' && char) {
   )}
 
 </div>
-
 
 {/* Advantages */}
 <div className="mt-6">
@@ -2186,7 +2804,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="bg-gray-700 p-4 rounded-lg">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xl font-bold">Spell Slots per Level</h3>
-                <button onClick={() => setEditModal({ type: 'spellSlots' })} className="px-4 py-2 text-base text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                <button onClick={() => setEditModal({ type: 'spellSlots' })} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
                   Edit Slots
                 </button>
               </div>
@@ -2694,9 +3312,6 @@ if (editModal.type === 'acTracking' && char) {
             })}
           </div>
         )}
-
-
-
 
       {activeTab === 'magic' && magicInventoryView && (
         <div className="space-y-4">
@@ -3252,6 +3867,7 @@ if (editModal.type === 'acTracking' && char) {
                                               onClick={() => {
                                                 const sides = Number(String(s.diceType || "d6").replace("d", "")) || 6;
                                                 const n = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
+                                                const rolls = [];
                                                 let total = 0;
                                                 for (let i = 0; i < n; i++) {
                                                   const el = document.getElementById(
@@ -3259,6 +3875,7 @@ if (editModal.type === 'acTracking' && char) {
                                                   );
                                                   const v = Math.max(1, Math.min(sides, Number(el?.value || 0)));
                                                   if (el) el.value = String(v);
+                                                  rolls.push(v);
                                                   total += v;
                                                 }
                                                 total += Number(s.diceBonus) || 0;
@@ -3277,7 +3894,7 @@ if (editModal.type === 'acTracking' && char) {
                                             </button>
                                           </div>
 
-                                          {rollResult && (
+                                          {rollResult?.rolls && (
                                             <div className="mt-3 text-center">
                                               <div className="text-xs">Rolls: {rollResult.rolls.join(', ')}</div>
                                               <div className="text-lg font-bold">Total: {rollResult.total}</div>
@@ -3420,7 +4037,7 @@ if (editModal.type === 'acTracking' && char) {
                                         });
                                       }
                                     }}
-                                    className="px-4 py-2 text-base text-base bg-red-600 rounded hover:bg-red-700 text-sm"
+                                    className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 text-sm"
                                   >
                                     <Minus size={16} />
                                   </button>
@@ -3436,6 +4053,107 @@ if (editModal.type === 'acTracking' && char) {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {activeTab === 'notes' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-2xl font-bold">Notes</h2>
+              <button
+                onClick={openNewNote}
+                className="px-4 py-2 bg-green-600 rounded hover:bg-green-700 font-semibold whitespace-nowrap"
+              >
+                + Add Note
+              </button>
+            </div>
+
+            {noteEditor.open && (
+              <div className="bg-gray-700 p-4 rounded-lg space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-bold">
+                    {noteEditor.noteId != null ? 'Edit Note' : 'New Note'}
+                  </div>
+                  <button
+                    onClick={cancelNoteEdit}
+                    className="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1">Title</label>
+                  <input
+                    value={noteEditor.title}
+                    onChange={(e) => setNoteEditor((p) => ({ ...p, title: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 rounded text-white"
+                    placeholder="Note title"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1">Description</label>
+                  <textarea
+                    value={noteEditor.description}
+                    onChange={(e) => setNoteEditor((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full p-2 bg-gray-800 rounded text-white min-h-[120px]"
+                    placeholder="Details..."
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={saveNote}
+                    className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {getNotes().length === 0 ? (
+              <div className="text-gray-300 bg-gray-700/40 p-4 rounded">
+                No notes yet. Click <span className="font-semibold">+ Add Note</span> to create one.
+              </div>
+            ) : (
+              <div
+                className="space-y-3 max-h-[70vh] overflow-y-auto pr-6"
+                style={{ scrollbarGutter: 'stable' }}
+              >
+                {getNotes().map((n) => (
+                  <div key={n.id} className="bg-gray-700 p-4 rounded-lg">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-lg break-words">{n.title || '(Untitled)'}</div>
+                        {n.description ? (
+                          <div className="text-sm text-gray-200 mt-2 whitespace-pre-wrap break-words">{n.description}</div>
+                        ) : (
+                          <div className="text-sm text-gray-400 mt-2">(No description)</div>
+                        )}
+                      </div>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => openEditNote(n)}
+                          className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 font-semibold text-sm"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm('Delete this note?')) deleteNote(n.id);
+                          }}
+                          className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 font-semibold text-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -3659,7 +4377,7 @@ if (editModal.type === 'acTracking' && char) {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-lg font-bold">Attacks</h4>
-                    <button onClick={() => setEditModal({ type: 'newCompanionAttack', companion })} className="px-4 py-2 text-base text-base bg-green-600 rounded hover:bg-green-700 text-sm">
+                    <button onClick={() => setEditModal({ type: 'newCompanionAttack', companion })} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700 text-sm">
                       + Attack
                     </button>
                   </div>
@@ -3849,7 +4567,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="bg-gray-700 p-4 rounded">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xl font-bold">Wallet</h3>
-                <button onClick={() => setEditModal({ type: 'wallet' })} className="px-4 py-2 text-base text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                <button onClick={() => setEditModal({ type: 'wallet' })} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
                   Use Wallet
                 </button>
               </div>
@@ -3919,6 +4637,28 @@ if (editModal.type === 'acTracking' && char) {
                     </div>
                   )}
 
+                  {/* Display Stat Bonuses (STR, DEX, AC, Speed, etc.) */}
+                  {item.hasAttrBonus && (() => {
+                    const bonuses = Array.isArray(item.attrBonuses) 
+                      ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
+                      : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
+                          ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
+                          : []);
+                    if (bonuses.length === 0) return null;
+                    return (
+                      <div className="text-xs text-gray-200 mb-3">
+                        <div className="text-gray-400">Stat Bonuses:</div>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {bonuses.map((b, idx) => (
+                            <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
+                              {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   
                   
                   <div className="space-y-2">
@@ -3957,7 +4697,7 @@ if (editModal.type === 'acTracking' && char) {
                             );
                             const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
                             const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
-                            updateChar({ inventory: newInv, magicItems: nextMagicItems, grimoires: nextGrimoires });
+                            updateChar({ inventory: newInv, magicItems: nextMagicItems });
                           }} 
                           className="p-1 bg-green-600 rounded hover:bg-green-700"
                         >
@@ -3996,7 +4736,7 @@ if (editModal.type === 'acTracking' && char) {
                             onClick={() => {
                               setEditModal({ type: 'confirmSellItem', itemId: item.id });
                             }}
-                            className="px-4 py-2 text-base text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
+                            className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
                             title="Sell one"
                           >
                             Sell
@@ -4174,7 +4914,11 @@ if (editModal.type === 'acTracking' && char) {
 
 {editModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-          <div className={`bg-gray-800 rounded-lg p-6 w-full max-h-screen overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}>
+          <div
+            className={`bg-gray-800 rounded-lg p-6 pr-10 w-full max-h-screen overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
+            // Helps prevent the scrollbar from overlapping right-edge text on supported browsers.
+            style={{ scrollbarGutter: 'stable' }}
+          >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold">
                 {editModal.type === 'race' && 'Edit Race'}
@@ -4235,7 +4979,7 @@ if (editModal.type === 'acTracking' && char) {
                         const next = [...(char.classAbilities || []), ""];
                         updateChar({ classAbilities: next });
                       }}
-                      className="px-4 py-2 text-base text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                      className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
                     >
                       Add More
                     </button>
@@ -4358,7 +5102,7 @@ setEditModal(null);
                         const next = [...(char.raceAbilities || []), ""];
                         updateChar({ raceAbilities: next });
                       }}
-                      className="px-4 py-2 text-base text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                      className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
                     >
                       Add More
                     </button>
@@ -4396,7 +5140,6 @@ setEditModal(null);
                     ))}
                   </div>
 
-
                   <div className="mt-4 pt-3 border-t border-gray-600">
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-sm text-gray-400">Race Modifiers</label>
@@ -4406,7 +5149,7 @@ setEditModal(null);
                           const next = [...(char.raceAttributeMods || []), { attr: 'str', value: 0, valueText: '0', description: '' }];
                           updateChar({ raceAttributeMods: next });
                         }}
-                        className="px-4 py-2 text-base text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                        className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
                       >
                         Add More
                       </button>
@@ -4550,7 +5293,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
               {editModal.type === 'inventoryInfo' && (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-300">
@@ -4624,8 +5366,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
-
               {editModal.type === 'encumbranceInfo' && (
                 <div className="space-y-3">
                   {(() => {
@@ -4664,7 +5404,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
               {editModal.type === 'gameAlert' && (
                 <div className="space-y-3">
                   <div className="text-sm text-gray-200 whitespace-pre-wrap">
@@ -4679,22 +5418,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
-
-
-
               {editModal.type === 'race' && (
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Race Name</label>
                   <input
                     type="text"
-                    defaultValue={char.race}
+                    value={modalForms.race}
+                    onChange={(e) => updateModalForm({ race: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="race-input"
                   />
                   <button
                     onClick={() => {
-                      updateChar({ race: document.getElementById('race-input').value });
+                      updateChar({ race: modalForms.race });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
@@ -4703,20 +5438,19 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </button>
                 </div>
               )}
-
 
               {editModal.type === 'name' && (
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Character Name</label>
                   <input
                     type="text"
-                    defaultValue={char.name}
+                    value={modalForms.name}
+                    onChange={(e) => updateModalForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="name-input"
                   />
                   <button
                     onClick={() => {
-                      updateChar({ name: document.getElementById('name-input').value });
+                      updateChar({ name: modalForms.name });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
@@ -4726,19 +5460,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
               {editModal.type === 'class' && (
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Class Name</label>
                   <input
                     type="text"
-                    defaultValue={char.class1}
+                    value={modalForms.class}
+                    onChange={(e) => updateModalForm({ class: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="class-input"
                   />
                   <button
                     onClick={() => {
-                      updateChar({ class1: document.getElementById('class-input').value });
+                      updateChar({ class1: modalForms.class });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
@@ -4746,9 +5479,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     Save
                   </button>
                 </div>
-
-
-
 
               )}
 
@@ -4757,17 +5487,17 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-2">Base Speed (feet)</label>
                   <input
                     type="number"
-                    defaultValue={Number(char.speed) || 30}
+                    value={modalForms.speedBase}
+                    onChange={(e) => updateModalForm({ speedBase: parseInt(e.target.value) || 0 })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="speed-base"
                   />
 
                   <label className="block text-sm text-gray-400 mb-2 mt-3">Bonus (feet)</label>
                   <input
                     type="number"
-                    defaultValue={Number(char.speedBonus) || 0}
+                    value={modalForms.speedBonus}
+                    onChange={(e) => updateModalForm({ speedBonus: parseInt(e.target.value) || 0 })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="speed-bonus"
                   />
 
                   <div className="mt-3 text-sm text-gray-400">
@@ -4826,12 +5556,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     })()}
                   </div>
 
-
                   <button
                     onClick={() => {
-                      const base = parseInt((document.getElementById('speed-base') || {}).value, 10) || 0;
-                      const bonus = parseInt((document.getElementById('speed-bonus') || {}).value, 10) || 0;
-                      updateChar({ speed: base, speedBonus: bonus, equippedSpeedItemIds });
+                      updateChar({ speed: modalForms.speedBase, speedBonus: modalForms.speedBonus, equippedSpeedItemIds });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
@@ -4847,9 +5574,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-sm text-gray-400 mb-2">Current HP</label>
                     <input
                       type="number"
-                      defaultValue={(char.hp ?? char.currentHp) ?? 0}
+                      value={modalForms.hpCurrent}
+                      onChange={(e) => updateModalForm({ hpCurrent: parseInt(e.target.value) || 0 })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      id="hp-current-input"
                       min={0}
                       max={calculateMaxHP()}
                       step={1}
@@ -4860,9 +5587,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-sm text-gray-400 mb-2">Change (add or subtract)</label>
                     <input
                       type="number"
-                      defaultValue={0}
+                      value={modalForms.hpDelta}
+                      onChange={(e) => updateModalForm({ hpDelta: parseInt(e.target.value) || 0 })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      id="hp-delta-input"
                       step={1}
                     />
                     <div className="text-xs text-gray-400 mt-1">
@@ -4872,9 +5599,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   <button
                     onClick={() => {
-                      const base = parseInt((document.getElementById('hp-current-input') || {}).value, 10) || 0;
-                      const delta = parseInt((document.getElementById('hp-delta-input') || {}).value, 10) || 0;
-                      const next = clamp(base + delta, 0, calculateMaxHP());
+                      const next = clamp(modalForms.hpCurrent + modalForms.hpDelta, 0, calculateMaxHP());
                       updateChar({ hp: next, currentHp: next });
                       setEditModal(null);
                     }}
@@ -4886,7 +5611,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
 {editModal.type === 'hpTracking' && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <div className="text-sm text-gray-400 mb-3">
                     Enter HP gained at each level. Max HP is the sum of all levels + bonus. Total Max HP: <span className="font-bold text-white">{calculateMaxHP()}</span>
                   </div>
@@ -4914,9 +5639,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-sm font-bold text-green-400 mb-1">Bonus HP (from items, feats, etc.)</label>
                     <input
                       type="number"
-                      defaultValue={char.hpBonus || 0}
+                      value={modalForms.hpBonus}
+                      onChange={(e) => updateModalForm({ hpBonus: parseInt(e.target.value) || 0 })}
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      id="hp-bonus"
                     />
                   </div>
 
@@ -4934,7 +5659,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       return rolls.slice(0, showCount).map((rawStr, i) => {
                         const prevOk = i === 0 || ((parseInt(rolls[i - 1] || '0', 10) || 0) > 0);
                         return (
-                        <div key={i} className="flex items-center gap-2">
+                        <div key={i} className="flex flex-wrap items-center gap-2">
                           <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
                           <input
                             type="number"
@@ -4985,8 +5710,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           >
                             Roll
                           </button>
-                          <span className="text-xs text-gray-400">(CON {conMod >= 0 ? '+' : ''}{conMod})</span>
-                          <span className="text-xs text-gray-300 ml-2">
+                          <span className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0">(CON {conMod >= 0 ? '+' : ''}{conMod})</span>
+                          <span className="text-xs text-gray-300 whitespace-nowrap flex-shrink-0">
                             Total: {
                               (() => {
                                 const raw = parseInt((rawStr || '0'), 10) || 0;
@@ -4995,7 +5720,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               })()
                             }
                           </span>
-                          {!prevOk && <span className="text-xs text-gray-500 ml-2">(fill previous level first)</span>}
+                          {!prevOk && <span className="text-xs text-gray-500">(fill previous level first)</span>}
                         </div>
                       );
                       });
@@ -5048,7 +5773,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const effectiveLen = Math.max(3, lastFilled + 1);
                       const trimmedHpByLevel = draft.slice(0, effectiveLen);
 
-                      const newBonus = parseInt(document.getElementById('hp-bonus')?.value || '0', 10) || 0;
+                      const newBonus = modalForms.hpBonus || 0;
                       const newDie = Number(hpDieDraft) || 12;
                       const newMaxHP = trimmedHpByLevel.reduce((sum, hp) => sum + (Number(hp) || 0), 0) + newBonus;
                       const newCurrentHP = Math.min(char.hp, newMaxHP);
@@ -5080,9 +5805,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm font-bold text-gray-300 mb-1">Base AC</label>
                       <input
                         type="number"
-                        defaultValue={char.acBase || 10}
+                        value={modalForms.acBase}
+                        onChange={(e) => updateModalForm({ acBase: parseInt(e.target.value) || 10 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="ac-base"
                       />
                     </div>
                     
@@ -5108,7 +5833,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         {(char.inventory || []).filter(i => i.isArmor).length === 0 ? (
                           <div className="text-sm text-gray-400">No armor items in inventory</div>
                         ) : (
-                          <div className="bg-gray-700 rounded p-2 max-h-48 overflow-y-auto space-y-1">
+                          <div className="bg-gray-700 rounded p-2 pr-4 max-h-48 overflow-y-auto space-y-1" style={{ scrollbarGutter: 'stable' }}>
                             {(char.inventory || [])
                               .filter(i => i.isArmor)
                               .slice()
@@ -5142,14 +5867,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         )}
                       </div>
 
-
                       <div>
                         <label className="block text-sm font-bold text-gray-300 mb-1">Shield</label>
                         <select
                           value={equippedShieldId}
                           onChange={(e) => setEquippedShieldId(e.target.value)}
                           className="w-full p-2 bg-gray-700 rounded text-white"
-                          id="ac-shield-select"
                         >
                           <option value="">None</option>
                           {(char.inventory || []).filter(i => i.isShield).map((it) => (
@@ -5256,7 +5979,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           value={(getEncumbranceStatus() === 'overburdened') ? 0 : calcMod(getAttributeTotal('dex'))}
                           readOnly
                           className="w-full p-2 bg-gray-700 rounded text-white opacity-90"
-                          id="ac-mod"
                         />
                         {getEncumbranceStatus() === 'burdened' && (
                           <div className="mt-1 text-xs text-gray-400">
@@ -5272,9 +5994,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       ) : (
                         <input
                           type="number"
-                          defaultValue={char.acMod || 0}
+                          value={modalForms.acMod}
+                          onChange={(e) => updateModalForm({ acMod: parseInt(e.target.value) || 0 })}
                           className="w-full p-2 bg-gray-700 rounded text-white"
-                          id="ac-mod"
                         />
                       )}
                     </div>
@@ -5283,9 +6005,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm font-bold text-gray-300 mb-1">Magic</label>
                       <input
                         type="number"
-                        defaultValue={char.acMagic || 0}
+                        value={modalForms.acMagic}
+                        onChange={(e) => updateModalForm({ acMagic: parseInt(e.target.value) || 0 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="ac-magic"
                       />
                     </div>
                     
@@ -5293,18 +6015,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm font-bold text-gray-300 mb-1">Misc</label>
                       <input
                         type="number"
-                        defaultValue={char.acMisc || 0}
+                        value={modalForms.acMisc}
+                        onChange={(e) => updateModalForm({ acMisc: parseInt(e.target.value) || 0 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="ac-misc"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-green-400 mb-1">Bonus (temporary, use negative for penalties)</label>
                       <input
                         type="number"
-                        defaultValue={char.acBonus || 0}
+                        value={modalForms.acBonus}
+                        onChange={(e) => updateModalForm({ acBonus: parseInt(e.target.value) || 0 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="ac-bonus"
                       />
                     </div>
                   </div>
@@ -5312,12 +6034,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <button
                     onClick={() => {
                       const newAC = {
-                        acBase: parseInt(document.getElementById('ac-base').value) || 10,
+                        acBase: modalForms.acBase,
                         acModAuto: acUseDex,
-                        acMod: acUseDex ? calcMod(getAttributeTotal('dex')) : (parseInt(document.getElementById('ac-mod').value) || 0),
-                        acMagic: parseInt(document.getElementById('ac-magic').value) || 0,
-                        acMisc: parseInt(document.getElementById('ac-misc').value) || 0,
-                        acBonus: parseInt(document.getElementById('ac-bonus').value) || 0,
+                        acMod: acUseDex ? calcMod(getAttributeTotal('dex')) : modalForms.acMod,
+                        acMagic: modalForms.acMagic,
+                        acMisc: modalForms.acMisc,
+                        acBonus: modalForms.acBonus,
                         equippedArmorIds: (equippedArmorIds || []).map(x => parseInt(x, 10)).filter(n => !isNaN(n)),
                         equippedArmorId: (equippedArmorIds && equippedArmorIds.length) ? parseInt(equippedArmorIds[0], 10) : null,
                         equippedShieldId: equippedShieldId ? parseInt(equippedShieldId, 10) : null,
@@ -5340,11 +6062,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div className="space-y-4">
                   <div className="text-sm text-gray-400">Add XP to the current character.</div>
                   <label className="block text-sm text-gray-400">XP to Add</label>
-                  <DomStepper id="xp-add" defaultValue={0} step={100} min={0} allowManual={true} />
+                  <DomStepper value={modalForms.xpAdd} onChange={(v) => updateModalForm({ xpAdd: v })} step={100} min={0} allowManual={true} />
                   <button
                     onClick={() => {
-                      const add = parseInt((document.getElementById('xp-add') || {}).value, 10) || 0;
-                      updateChar({ currentXp: (char.currentXp || 0) + add });
+                      updateChar({ currentXp: (char.currentXp || 0) + modalForms.xpAdd });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
@@ -5355,13 +6076,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
 {editModal.type === 'xpTable' && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <div className="text-sm text-gray-400 mb-3">
                     Enter XP needed to reach each level (Levels 1-25). Level automatically updates based on current XP.
                   </div>
                   <div className="space-y-2">
                     {char.xpTable.map((xp, i) => (
-                      <div key={i} className="flex items-center gap-2">
+                      <div key={i} className="flex flex-wrap items-center gap-2">
                         <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
                         <input
                           type="number"
@@ -5421,12 +6142,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </label>
                   </div>
 
-
                   <label className="block text-sm text-gray-400 mb-1">Rolled {editModal.attr?.toUpperCase()} Score</label>
-                  <DomStepper id="attr-rolled" defaultValue={ getAttributeRolled(editModal.attr) } step={1} min={1} max={30} className="mb-3" />
+                  <DomStepper value={modalForms.attrRolled} onChange={(v) => updateModalForm({ attrRolled: v })} step={1} min={1} max={30} className="mb-3" />
 
                   <label className="block text-sm text-gray-400 mb-1">Bonus Modifier</label>
-                  <DomStepper id="attr-bonus" defaultValue={ getAttributeBonusMod(editModal.attr) } step={1} min={-10} max={10} className="mb-3" />
+                  <DomStepper value={modalForms.attrBonus} onChange={(v) => updateModalForm({ attrBonus: v })} step={1} min={-10} max={10} className="mb-3" />
 
                   <div className="bg-gray-700 p-3 rounded text-sm">
                     {(() => {
@@ -5440,7 +6160,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const raceTotal = (char.raceAttributeMods || [])
                         .filter(m => String(m.attr).toLowerCase() === String(attrKey).toLowerCase())
                         .reduce((sum, m) => sum + (Number(m.value) || 0), 0);
-
 
                       return (
                         <>
@@ -5471,7 +6190,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             {candidates.length === 0 ? (
                               <div className="text-gray-400">No attribute-bonus items for this stat</div>
                             ) : (
-                              <div className="bg-gray-800 rounded p-2 max-h-40 overflow-y-auto space-y-1">
+                              <div className="bg-gray-800 rounded p-2 pr-4 max-h-40 overflow-y-auto space-y-1" style={{ scrollbarGutter: 'stable' }}>
                                 {candidates.map((c) => {
                                   const sid = String(c.id);
                                   const checked = selectedIds.includes(sid);
@@ -5500,7 +6219,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           </div>
 
                           <div className="font-bold mt-2">
-                            Total: {getAttributeRolled(attrKey) + raceTotal + getAttributeBonusMod(attrKey) + itemTotal}
+                            Total: {modalForms.attrRolled + raceTotal + modalForms.attrBonus + itemTotal}
                           </div>
                         </>
                       );
@@ -5510,13 +6229,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <button
                     onClick={() => {
                       const newAttrs = { ...char.attributes };
-                      const rolled = parseInt((document.getElementById('attr-rolled') || {}).value, 10);
-                      const bonus = parseInt((document.getElementById('attr-bonus') || {}).value, 10);
 
                       newAttrs[editModal.attr] = {
                         ...newAttrs[editModal.attr],
-                        rolledScore: Number.isFinite(rolled) ? rolled : (newAttrs[editModal.attr]?.rolledScore || 10),
-                        bonusMod: Number.isFinite(bonus) ? bonus : (newAttrs[editModal.attr]?.bonusMod || 0),
+                        rolledScore: modalForms.attrRolled,
+                        bonusMod: modalForms.attrBonus,
                       };
 
                       const newEquipped = { ...(char.equippedAttrBonuses || { str: [], dex: [], con: [], int: [], wis: [], cha: [] }) };
@@ -5538,11 +6255,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     Use negative numbers for penalties.
                   </div>
                   <label className="block text-sm text-gray-400 mb-2">{editModal.attr?.toUpperCase()} Save Modifier</label>
-                  <DomStepper id="save-mod-input" defaultValue={ char.attributes[editModal.attr]?.saveModifier || 0 } step={1} min={-10} max={10} className="mb-3" />
+                  <DomStepper value={modalForms.saveModInput} onChange={(v) => updateModalForm({ saveModInput: v })} step={1} min={-10} max={10} className="mb-3" />
                   <button
                     onClick={() => {
                       const newAttrs = { ...char.attributes };
-                      newAttrs[editModal.attr].saveModifier = parseInt(document.getElementById('save-mod-input').value) || 0;
+                      newAttrs[editModal.attr].saveModifier = modalForms.saveModInput;
                       const newEquipped = { ...(char.equippedAttrBonuses || { str: [], dex: [], con: [], int: [], wis: [], cha: [] }) };
                       newEquipped[editModal.attr] = (attrEquippedIds || []).map(x => parseInt(x, 10)).filter(n => !isNaN(n));
                       updateChar({ attributes: newAttrs, equippedAttrBonuses: newEquipped });
@@ -5559,11 +6276,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <div className="text-sm text-gray-400 mb-3">Set your character's Base To Hit (BTH). This is your class/level base before attack-specific modifiers.</div>
                   <label className="block text-sm text-gray-400 mb-1">BTH (Base)</label>
-                  <DomStepper id="bth-base" defaultValue={ char.baseBth || 0 } step={1} min={0} max={30} className="mb-3" />
+                  <DomStepper value={modalForms.bthBase} onChange={(v) => updateModalForm({ bthBase: v })} step={1} min={0} max={30} className="mb-3" />
                   <button
                     onClick={() => {
-                      const baseBth = parseInt(document.getElementById('bth-base').value) || 0;
-                      updateChar({ baseBth });
+                      updateChar({ baseBth: modalForms.bthBase });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
@@ -5577,14 +6293,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <div className="text-sm text-gray-400 mb-3">Temporary bonuses from bless, curse, etc. Use negative numbers for penalties.</div>
                   <label className="block text-sm text-gray-400 mb-2">Attack Bonus</label>
-                  <DomStepper id="attack-bonus" defaultValue={ char.attackBonus } step={1} min={-20} max={20} className="mb-3" />
+                  <DomStepper value={modalForms.attackBonus} onChange={(v) => updateModalForm({ attackBonus: v })} step={1} min={-20} max={20} className="mb-3" />
                   <label className="block text-sm text-gray-400 mb-2">Damage Bonus</label>
-                  <DomStepper id="damage-bonus" defaultValue={ char.damageBonus } step={1} min={-20} max={20} className="" />
+                  <DomStepper value={modalForms.damageBonus} onChange={(v) => updateModalForm({ damageBonus: v })} step={1} min={-20} max={20} className="" />
                   <button
                     onClick={() => {
                       updateChar({
-                        attackBonus: parseInt(document.getElementById('attack-bonus').value) || 0,
-                        damageBonus: parseInt(document.getElementById('damage-bonus').value) || 0
+                        attackBonus: modalForms.attackBonus,
+                        damageBonus: modalForms.damageBonus
                       });
                       setEditModal(null);
                     }}
@@ -5601,14 +6317,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-2">Save Bonus</label>
                   <input
                     type="number"
-                    defaultValue={char.saveBonus}
+                    value={modalForms.saveBonus}
+                    onChange={(e) => updateModalForm({ saveBonus: parseInt(e.target.value) || 0 })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="save-bonus"
                   />
                   <button
                     onClick={() => {
                       updateChar({
-                        saveBonus: parseInt(document.getElementById('save-bonus').value) || 0
+                        saveBonus: modalForms.saveBonus
                       });
                       setEditModal(null);
                     }}
@@ -5629,40 +6345,32 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Copper</label>
-                      <DomStepper id="wallet-cp" defaultValue={0} step={1} min={0} allowManual resetToken={walletReset} />
+                      <DomStepper value={walletForm.cp} onChange={(v) => updateWalletForm({ cp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Silver</label>
-                      <DomStepper id="wallet-sp" defaultValue={0} step={1} min={0} allowManual resetToken={walletReset} />
+                      <DomStepper value={walletForm.sp} onChange={(v) => updateWalletForm({ sp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Gold</label>
-                      <DomStepper id="wallet-gp" defaultValue={0} step={1} min={0} allowManual resetToken={walletReset} />
+                      <DomStepper value={walletForm.gp} onChange={(v) => updateWalletForm({ gp: v })} step={1} min={0} allowManual />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Platinum</label>
-                      <DomStepper id="wallet-pp" defaultValue={0} step={1} min={0} allowManual resetToken={walletReset} />
+                      <DomStepper value={walletForm.pp} onChange={(v) => updateWalletForm({ pp: v })} step={1} min={0} allowManual />
                     </div>
                   </div>
 
                   <div className="space-y-2 mt-3">
                     <button
                       onClick={() => {
-                        const cp = parseFloat(document.getElementById('wallet-cp').value) || 0;
-                        const sp = parseFloat(document.getElementById('wallet-sp').value) || 0;
-                        const gp = parseFloat(document.getElementById('wallet-gp').value) || 0;
-                        const pp = parseFloat(document.getElementById('wallet-pp').value) || 0;
-                        const totalGP = (cp / 100) + (sp / 10) + gp + (pp * 10);
+                        const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
 
                         if (totalGP !== 0) {
                           updateChar({ moneyGP: char.moneyGP + totalGP });
                         }
 
-                        document.getElementById('wallet-cp').value = 0;
-                        document.getElementById('wallet-sp').value = 0;
-                        document.getElementById('wallet-gp').value = 0;
-                        document.getElementById('wallet-pp').value = 0;
-                        setWalletReset(r => r + 1);
+                        resetWalletForm();
 }}
                       className="w-full py-2 bg-green-600 rounded hover:bg-green-700"
                     >
@@ -5671,11 +6379,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                     <button
                       onClick={() => {
-                        const cp = parseFloat(document.getElementById('wallet-cp').value) || 0;
-                        const sp = parseFloat(document.getElementById('wallet-sp').value) || 0;
-                        const gp = parseFloat(document.getElementById('wallet-gp').value) || 0;
-                        const pp = parseFloat(document.getElementById('wallet-pp').value) || 0;
-                        const totalGP = (cp / 100) + (sp / 10) + gp + (pp * 10);
+                        const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
 
                         if (totalGP > char.moneyGP) {
                           alert(`Insufficient funds! You need ${(totalGP - char.moneyGP).toFixed(2)} more GP.`);
@@ -5686,11 +6390,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           updateChar({ moneyGP: char.moneyGP - totalGP });
                         }
 
-                        document.getElementById('wallet-cp').value = 0;
-                        document.getElementById('wallet-sp').value = 0;
-                        document.getElementById('wallet-gp').value = 0;
-                        document.getElementById('wallet-pp').value = 0;
-                        setWalletReset(r => r + 1);
+                        resetWalletForm();
 }}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
                     >
@@ -5708,22 +6408,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
               {(editModal.type === 'newItem' || editModal.type === 'editItem') && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <label className="block text-sm text-gray-400 mb-1">Item Name</label>
                   <input
                     type="text"
                     placeholder="e.g., Rope, Health Potion"
-                    defaultValue={editModal.item?.name || ''}
+                    value={itemForm.name}
+                    onChange={(e) => updateItemForm({ name: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="item-name"
                   />
                   
                   <label className="block text-sm text-gray-400 mb-1">Description</label>
                   <textarea
                     placeholder="Item description..."
-                    defaultValue={editModal.item?.description || ''}
+                    value={itemForm.description}
+                    onChange={(e) => updateItemForm({ description: e.target.value })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3 h-20"
-                    id="item-desc"
                   />
                   
                   <div className="grid grid-cols-2 gap-2 mb-3">
@@ -5731,9 +6431,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">Quantity</label>
                       <input
                         type="number"
-                        defaultValue={editModal.item?.quantity || 1}
+                        value={itemForm.quantity}
+                        onChange={(e) => updateItemForm({ quantity: parseInt(e.target.value) || 1 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="item-qty"
                       />
                     </div>
                     <div>
@@ -5741,9 +6441,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         step="0.1"
-                        defaultValue={editModal.item?.weightPer || 0}
+                        value={itemForm.weightPer}
+                        onChange={(e) => updateItemForm({ weightPer: parseFloat(e.target.value) || 0 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="item-weight"
                       />
                     </div>
 </div>
@@ -5755,15 +6455,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="number"
                         step="0.01"
-                        defaultValue={editModal.item?.worthAmount ?? (editModal.item?.worthGP != null ? editModal.item.worthGP : '')}
+                        value={itemForm.worth}
+                        onChange={(e) => updateItemForm({ worth: parseFloat(e.target.value) || 0 })}
                         className="flex-1 p-2 bg-gray-700 rounded text-white"
-                        id="item-worth"
                         placeholder=""
                       />
                       <select
-                        defaultValue={(editModal.item?.worthUnit || (editModal.item?.worthGP != null ? 'gp' : 'gp'))}
+                        value={itemForm.worthUnit}
+                        onChange={(e) => updateItemForm({ worthUnit: e.target.value })}
                         className="w-24 p-2 bg-gray-700 rounded text-white"
-                        id="item-worth-unit"
                       >
                         <option value="cp">CP</option>
                         <option value="sp">SP</option>
@@ -5777,11 +6477,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     type="number"
                     step="0.1"
-                    defaultValue={editModal.item?.ev || 0}
+                    value={itemForm.ev}
+                    onChange={(e) => updateItemForm({ ev: parseFloat(e.target.value) || 0 })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="item-ev"
                   />
-
 
                   
                   <div className="grid grid-cols-2 gap-3 mb-3">
@@ -5902,16 +6601,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       </div>
                     )}
 
-
                   {(itemIsArmor || itemIsShield) && (
 
                     <div className="mb-3">
                       <label className="block text-sm text-gray-400 mb-1">AC Bonus</label>
                       <input
                         type="number"
-                        defaultValue={editModal.item?.acBonus || 0}
+                        value={itemForm.acBonus}
+                        onChange={(e) => updateItemForm({ acBonus: parseInt(e.target.value) || 0 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                        id="item-acBonus"
                       />
                       <div className="text-xs text-gray-400 mt-1">
                         This is the AC bonus the armor/shield provides (for AC Tracking dropdowns).
@@ -5945,7 +6643,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           </select>
                         </div>
                       </div>
-
 
                       <label className="block text-sm text-gray-400 mb-1">Weapon Modes</label>
                       <div className="flex gap-4 mb-3">
@@ -6006,9 +6703,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       </div>
                     </div>
                   )}
-
-
-
 
                   <div className="mb-3">
 {itemHasAttrBonus && (
@@ -6267,24 +6961,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const newItem = {
                         id: editModal.item?.id || Date.now(),
-                        name: document.getElementById('item-name').value,
-                        description: document.getElementById('item-desc').value,
-                        quantity: parseInt(document.getElementById('item-qty').value) || 1,
-                        weightPer: parseFloat(document.getElementById('item-weight').value) || 0,
-                        ev: parseFloat(document.getElementById('item-ev').value) || 0,
-                        worthAmount: (() => {
-                          const el = document.getElementById('item-worth');
-                          if (!el) return null;
-                          const raw = String(el.value || '').trim();
-                          if (raw === '') return null;
-                          const v = parseFloat(raw);
-                          return Number.isFinite(v) ? v : null;
-                        })(),
-                        worthUnit: (() => {
-                          const el = document.getElementById('item-worth-unit');
-                          const raw = String((el && el.value) || 'gp').toLowerCase();
-                          return ['cp','sp','gp','pp'].includes(raw) ? raw : 'gp';
-                        })(),
+                        name: itemForm.name,
+                        description: itemForm.description,
+                        quantity: itemForm.quantity,
+                        weightPer: itemForm.weightPer,
+                        ev: itemForm.ev,
+                        worthAmount: itemForm.worth || null,
+                        worthUnit: itemForm.worthUnit,
                         effects: itemHasEffects ? (Array.isArray(itemEffects) ? itemEffects : []) : [],
                         isArmor: !!itemIsArmor,
                         isShield: !!itemIsShield,
@@ -6298,9 +6981,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         weaponDamageMisc: itemIsWeapon ? (Number(itemWeaponDamageMisc) || 0) : 0,
                         weaponDamageNumDice: itemIsWeapon ? (Number(itemWeaponDamageNumDice) || 1) : 1,
                         weaponDamageDieType: itemIsWeapon ? (Number(itemWeaponDamageDieType) || 8) : 8,
-                        acBonus: (itemIsArmor || itemIsShield)
-                          ? (parseInt((document.getElementById('item-acBonus') || {}).value, 10) || 0)
-                          : 0,
+                        acBonus: (itemIsArmor || itemIsShield) ? itemForm.acBonus : 0,
                         hasAttrBonus: !!itemHasAttrBonus && (Array.isArray(itemStatBonuses) ? itemStatBonuses.length > 0 : false),
                         attrBonuses: (itemHasAttrBonus && Array.isArray(itemStatBonuses)) ? itemStatBonuses : [],
                         // Legacy single fields retained for backward compatibility (first bonus only)
@@ -6372,22 +7053,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-2">Spell Save DC</label>
                   <input
                     type="number"
-                    defaultValue={char.spellSaveDC}
+                    value={modalForms.spellDC}
+                    onChange={(e) => updateModalForm({ spellDC: parseInt(e.target.value) || 10 })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
-                    id="spell-dc"
                   />
                   <label className="block text-sm text-gray-400 mb-2">Spell Attack Bonus</label>
                   <input
                     type="number"
-                    defaultValue={char.spellAttackBonus}
+                    value={modalForms.spellAtk}
+                    onChange={(e) => updateModalForm({ spellAtk: parseInt(e.target.value) || 0 })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
-                    id="spell-atk"
                   />
                   <button
                     onClick={() => {
                       updateChar({
-                        spellSaveDC: parseInt(document.getElementById('spell-dc').value) || 10,
-                        spellAttackBonus: parseInt(document.getElementById('spell-atk').value) || 0
+                        spellSaveDC: modalForms.spellDC,
+                        spellAttackBonus: modalForms.spellAtk
                       });
                       setEditModal(null);
                     }}
@@ -6531,7 +7212,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               </div>
             )}
 
-
               {editModal?.type === 'confirmSellItem' && (() => {
                 const sellItem = (char.inventory || []).find(i => String(i.id) === String(editModal.itemId));
                 if (!sellItem) return null;
@@ -6613,9 +7293,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 );
               })()}
 
-
               {(editModal.type === 'newSpell' || editModal.type === 'editSpell') && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <label className="block text-sm text-gray-400 mb-1">Spell Name</label>
                   <input
                     type="text"
@@ -6687,10 +7366,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </div>
                   )}
 
-
               
-
-
 
                   <div className="grid grid-cols-2 gap-2 mb-3">
                     <div>
@@ -6852,7 +7528,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
               )}
 
-
                             
 
               {editModal.type === 'newMagicItemSpell' && (
@@ -6927,7 +7602,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
               {editModal.type === 'editMagicItemSpell' && (
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   {(() => {
                     const learnedSorted = (char.spellsLearned || []).slice().sort(sortSpellsLevelName);
                     const selectedName = String(editModal.selectedSpellName || editModal.spellName || '');
@@ -7216,7 +7891,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
               {(editModal.type === 'newCompanion' || editModal.type === 'editCompanion') && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <label className="block text-sm text-gray-400 mb-1">Name</label>
                   <input
                     type="text"
@@ -7358,7 +8033,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
               {(editModal.type === 'newCompanionAttack' || editModal.type === 'editCompanionAttack') && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   
                   
 
@@ -7479,7 +8154,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </div>
                   </div>
 
-
                   <button
                     onClick={() => {
                       const newAttack = {
@@ -7537,7 +8211,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               )}
 
               {(editModal.type === 'newAttack' || editModal.type === 'editAttack') && (
-                <div className="max-h-96 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <label className="block text-sm text-gray-400 mb-1">Attack Name</label>
                   <input
                     type="text"
