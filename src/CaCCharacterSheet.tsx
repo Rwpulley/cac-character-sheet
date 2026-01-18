@@ -351,7 +351,7 @@ const DomStepper = React.memo(function DomStepper({
       </button>
 
       {/* Hidden input for legacy getElementById access - only rendered if id is provided */}
-      {id && <input type="number" id={id} value={val} readOnly className="hidden" />}
+      {id && <input type="text" inputMode="numeric" id={id} value={val} readOnly className="hidden" />}
     </div>
   );
 });
@@ -617,6 +617,10 @@ export default function CaCCharacterSheet() {
   const [activeTab, setActiveTab] = useState('main');
   const [editModal, setEditModal] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // In-app confirmation modal (replaces browser confirm())
+  const [confirmModal, setConfirmModal] = useState(null);
+  // Usage: setConfirmModal({ message: 'Delete?', onConfirm: () => doSomething() })
 
   // Notes tab editor
   const [noteEditor, setNoteEditor] = useState({
@@ -632,6 +636,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [hpDraftRolls, setHpDraftRolls] = useState(['', '', '']);
   const [hpDraftLevels, setHpDraftLevels] = useState([0, 0, 0]);
   const [addAttackModalOpen, setAddAttackModalOpen] = useState(false);
+  const [expandedAttackIds, setExpandedAttackIds] = useState({}); // Track which attacks are expanded
 
   const [rollModal, setRollModal] = useState(null);
   const [rollResult, setRollResult] = useState(null);
@@ -1108,21 +1113,42 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   }, [editModal, currentCharIndex]);
 
   // ===== AUTO-SAVE WHEN CHARACTERS CHANGE =====
+  // Throttled auto-save - saves at most every 500ms to prevent UI freezes
+  const saveTimeoutRef = useRef(null);
+  const pendingSaveRef = useRef(null);
+  
   useEffect(() => {
     // Don't save on initial mount with empty array
     if (characters.length === 0 && !localStorage.getItem(STORAGE_KEY)) {
       return;
     }
     
-    setSaveStatus('saving');
-    const success = saveToLocalStorage(characters);
-    setSaveStatus(success ? 'saved' : 'error');
+    // Store the pending data
+    pendingSaveRef.current = characters;
     
-    // Clear the "saved" indicator after 2 seconds
-    if (success) {
-      const timer = setTimeout(() => setSaveStatus(''), 2000);
-      return () => clearTimeout(timer);
+    // If we're already waiting to save, don't schedule another
+    if (saveTimeoutRef.current) {
+      return;
     }
+    
+    setSaveStatus('saving');
+    
+    // Schedule the save after 500ms
+    saveTimeoutRef.current = setTimeout(() => {
+      const dataToSave = pendingSaveRef.current;
+      const success = saveToLocalStorage(dataToSave);
+      setSaveStatus(success ? 'saved' : 'error');
+      saveTimeoutRef.current = null;
+      
+      // Clear the "saved" indicator after 2 seconds
+      if (success) {
+        setTimeout(() => setSaveStatus(''), 2000);
+      }
+    }, 500);
+    
+    return () => {
+      // Don't clear the timeout on cleanup - let the save complete
+    };
   }, [characters]);
 
   // ===== EXPORT/IMPORT HANDLERS =====
@@ -1242,20 +1268,34 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     };
   }, [char?.attributes, char?.raceAttributeMods, char?.equippedAttrBonuses, char?.inventory, normalizeItemStatBonusesStatic]);
 
+  // Memoized attribute modifiers (derived from totals)
+  const memoizedAttributeMods = useMemo(() => ({
+    str: calcMod(memoizedAttributeTotals.str),
+    dex: calcMod(memoizedAttributeTotals.dex),
+    con: calcMod(memoizedAttributeTotals.con),
+    int: calcMod(memoizedAttributeTotals.int),
+    wis: calcMod(memoizedAttributeTotals.wis),
+    cha: calcMod(memoizedAttributeTotals.cha)
+  }), [memoizedAttributeTotals]);
+
   // Memoized encumbrance calculations
   const memoizedEncumbrance = useMemo(() => {
-    if (!char) return { rating: 0, totalEV: 0, status: 'unburdened', speedPenalty: 0 };
+    if (!char) return { rating: 0, totalEV: 0, totalWeight: 0, status: 'unburdened', speedPenalty: 0 };
     
     const strScore = memoizedAttributeTotals.str;
     const strPrime = !!char.attributes?.str?.isPrime;
     const conPrime = !!char.attributes?.con?.isPrime;
     const rating = strScore + (strPrime ? 3 : 0) + (conPrime ? 3 : 0);
     
-    const totalEV = (char.inventory || []).reduce((sum, it) => {
+    let totalEV = 0;
+    let totalWeight = 0;
+    (char.inventory || []).forEach(it => {
       const qty = Number(it.quantity) || 1;
       const ev = Number(it.ev) || 0;
-      return sum + (ev * qty);
-    }, 0);
+      const weight = Number(it.weightPer) || 0;
+      totalEV += ev * qty;
+      totalWeight += weight * qty;
+    });
     
     let status = 'unburdened';
     if (rating > 0) {
@@ -1284,7 +1324,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     
     const finalSpeed = status === 'unburdened' ? preEncumbranceSpeed : Math.max(preEncumbranceSpeed - speedPenalty, 5);
     
-    return { rating, totalEV, status, speedPenalty, preEncumbranceSpeed, finalSpeed };
+    return { rating, totalEV, totalWeight, status, speedPenalty, preEncumbranceSpeed, finalSpeed };
   }, [char?.speed, char?.speedBonus, char?.equippedSpeedItemIds, char?.inventory, char?.attributes?.str?.isPrime, char?.attributes?.con?.isPrime, memoizedAttributeTotals.str, normalizeItemStatBonusesStatic]);
 
   // Memoized AC calculation
@@ -1537,6 +1577,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   // Use memoized encumbrance values
   const getEncumbranceRating = () => memoizedEncumbrance.rating;
   const getInventoryTotalEV = () => memoizedEncumbrance.totalEV;
+  const getTotalWeight = () => memoizedEncumbrance.totalWeight;
   const getEncumbranceStatus = () => memoizedEncumbrance.status;
 
   const getEncumbranceStatusLabel = () => {
@@ -1649,7 +1690,10 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemAttrBonusValue(0);
                             setItemAttrBonusValueText('0');
       setItemAttrBonusValueText('0');
-      setItemIsMagicCasting(false);
+      // If coming from Magic Inventory, keep magic casting enabled
+      if (!editModal.fromMagicInventory) {
+        setItemIsMagicCasting(false);
+      }
       setItemIsGrimoire(false);
       setItemMagicCastingDescription('');
       setItemMagicCastingCapacity(0);
@@ -2003,10 +2047,12 @@ if (editModal.type === 'acTracking' && char) {
   const deleteGrimoire = (grimoireId) => {
     const g = (char.grimoires || []).find(x => x.id === grimoireId);
     if (!g) return;
-    if (window.confirm(`Delete grimoire "${g.name}"? This cannot be undone.`)) {
-      updateChar({ grimoires: (char.grimoires || []).filter(x => x.id !== grimoireId) });
-    
-    }
+    setConfirmModal({
+      message: `Delete grimoire "${g.name}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: () => updateChar({ grimoires: (char.grimoires || []).filter(x => x.id !== grimoireId) })
+    });
   };
 
   // Magic Inventory (scrolls, wands, rods, etc.)
@@ -2340,21 +2386,21 @@ if (editModal.type === 'acTracking' && char) {
           </div>
 
           {/* Export/Import Buttons */}
-          <div className="flex gap-2 mb-6">
+          <div className="flex gap-2 mb-4">
             <button
               onClick={handleExport}
               disabled={characters.length === 0}
-              className="flex-1 py-3 bg-blue-600 rounded-lg font-bold hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed flex items-center justify-center gap-1"
             >
-              <Download size={20} />
-              Export Backup
+              <Download size={14} />
+              Export
             </button>
             <button
               onClick={handleImportClick}
-              className="flex-1 py-3 bg-purple-600 rounded-lg font-bold hover:bg-purple-700 flex items-center justify-center gap-2"
+              className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 flex items-center justify-center gap-1"
             >
-              <Upload size={20} />
-              Import Backup
+              <Upload size={14} />
+              Import
             </button>
           </div>
 
@@ -2393,6 +2439,12 @@ if (editModal.type === 'acTracking' && char) {
               </button>
             </div>
           ))}
+
+          {/* App Info */}
+          <div className="text-center text-gray-500 text-sm mt-8 pt-4 border-t border-gray-700">
+            <div>C&C Character Sheet v1.0</div>
+            <div>Created by Rwpull</div>
+          </div>
         </div>
       </div>
 
@@ -2844,8 +2896,9 @@ if (editModal.type === 'acTracking' && char) {
                   ? !!attack.autoMods
                   : (!!attack.weaponId || attack.weaponMode === 'melee' || attack.weaponMode === 'ranged' || String(attack.name || '').toLowerCase().includes('unarmed'));
 
-              const strModNow = calcMod(getAttributeTotal('str'));
-              const dexModNow = calcMod(getAttributeTotal('dex'));
+              // Use memoized attribute mods instead of recalculating
+              const strModNow = memoizedAttributeMods.str;
+              const dexModNow = memoizedAttributeMods.dex;
               const abilityToHitMod = isRanged ? dexModNow : strModNow;
 
               // When autoMods is on, treat attack.attrMod as an *extra* modifier (not the base ability mod).
@@ -2892,175 +2945,204 @@ if (editModal.type === 'acTracking' && char) {
                 + (eff.magicDamage || 0);
 
               return (
-                <div key={attack.id} className="bg-gray-700 p-4 rounded">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xl font-bold">{attack.weaponId ? getBoundAttackName(attack, char.inventory) : attack.name}</h3>
-                    <button
-                      onClick={() => {
-                        const updated = (char.attacks || []).map(a =>
-                          a.id === attack.id ? { ...a, isFavorite: !a.isFavorite } : a
-                        );
-                        updateChar({ attacks: updated });
-                      }}
-                      className={`p-2 rounded ${attack.isFavorite ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-gray-600 hover:bg-gray-500'}`}
-                      title={attack.isFavorite ? 'Unfavorite' : 'Favorite'}
-                    >
-                      ★
-                    </button>
-                    <button onClick={() => setEditModal({ type: 'editAttack', attack })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
-                      <Edit2 size={16} />
-                    </button>
+                <div key={attack.id} className="bg-gray-700 rounded overflow-hidden">
+                  {/* Collapsed Header - Always visible */}
+                  <div 
+                    className="p-3 cursor-pointer hover:bg-gray-600 transition-colors"
+                    onClick={() => setExpandedAttackIds(prev => ({ ...prev, [attack.id]: !prev[attack.id] }))}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{expandedAttackIds[attack.id] ? '▼' : '▶'}</span>
+                          <h3 className="text-lg font-bold">{attack.weaponId ? getBoundAttackName(attack, char.inventory) : attack.name}</h3>
+                          {attack.isFavorite && <span className="text-yellow-500">★</span>}
+                        </div>
+                        <div className="text-sm ml-6 mt-1">
+                          <span className="text-blue-400">To Hit: <span className="font-semibold">{toHit >= 0 ? '+' : ''}{toHit}</span></span>
+                          <span className="text-gray-500 mx-2">/</span>
+                          <span className="text-red-400">Damage: <span className="font-semibold">{attack.numDice}d{attack.dieType}{dmgBonus >= 0 ? '+' : ''}{dmgBonus}</span></span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editAttack', attack }); }} 
+                        className="p-2 bg-gray-600 rounded hover:bg-gray-500 flex-shrink-0"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
-                    <div className="bg-gray-800 p-3 rounded">
-                      <div className="font-bold text-blue-400 mb-2">TO HIT</div>
-                      <div className="text-sm space-y-1 mb-2">                        <div>BTH (Base): {char.baseBth >= 0 ? '+' : ''}{char.baseBth || 0}</div>
-                        <div>Mod: {computedAttrMod >= 0 ? '+' : ''}{computedAttrMod}{attrKeyUsed ? ` (${attrKeyUsed.toUpperCase()})` : ''}</div>
-                        <div>Misc: +{(attack.misc || 0) + weaponToHitMisc + (eff.miscToHit || 0)}</div>
-                        <div>Magic: +{(attack.magic || 0) + weaponToHitMagic + (eff.magicToHit || 0)}</div>
-                        <div>Bonus Mod: {attackBthBonus >= 0 ? '+' : ''}{attackBthBonus}</div>
-                        {char.attackBonus !== 0 && <div className="text-purple-400">Bonus: {char.attackBonus >= 0 ? '+' : ''}{char.attackBonus}</div>}
-                        <div className="font-bold text-lg border-t border-gray-600 pt-1 mt-1">
-                          Total: +{toHit}
-                        </div>
-                        {eff.appliedItemNames && eff.appliedItemNames.length > 0 && (
-                          <div className="text-xs text-gray-300 mt-1">
-                            Applied: {eff.appliedItemNames.join(', ')}
+                  {/* Expanded Content */}
+                  {expandedAttackIds[attack.id] && (
+                    <div className="px-3 pb-3 border-t border-gray-600">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="font-bold text-blue-400 mb-2">TO HIT</div>
+                          <div className="text-sm space-y-1 mb-2">
+                            <div>BTH (Base): {char.baseBth >= 0 ? '+' : ''}{char.baseBth || 0}</div>
+                            <div>Mod: {computedAttrMod >= 0 ? '+' : ''}{computedAttrMod}{attrKeyUsed ? ` (${attrKeyUsed.toUpperCase()})` : ''}</div>
+                            <div>Misc: +{(attack.misc || 0) + weaponToHitMisc + (eff.miscToHit || 0)}</div>
+                            <div>Magic: +{(attack.magic || 0) + weaponToHitMagic + (eff.magicToHit || 0)}</div>
+                            <div>Bonus Mod: {attackBthBonus >= 0 ? '+' : ''}{attackBthBonus}</div>
+                            {char.attackBonus !== 0 && <div className="text-purple-400">Bonus: {char.attackBonus >= 0 ? '+' : ''}{char.attackBonus}</div>}
+                            <div className="font-bold text-lg border-t border-gray-600 pt-1 mt-1">
+                              Total: +{toHit}
+                            </div>
+                            {eff.appliedItemNames && eff.appliedItemNames.length > 0 && (
+                              <div className="text-xs text-gray-300 mt-1">
+                                Applied: {eff.appliedItemNames.join(', ')}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => {
-                          setRollModal({ type: 'attack', attack, toHit });
-                          setRollResult(null);
-                        }}
-                        className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
-                      >
-                        Roll Attack
-                      </button>
-                      {rollModal?.attack?.id === attack.id && rollModal.type === 'attack' && (
-                        <div className="mt-2 p-2 bg-gray-600 rounded">
                           <button
                             onClick={() => {
-                              const roll = rollDice(20);
-                              setRollResult({ roll, total: roll + toHit });
+                              setRollModal({ type: 'attack', attack, toHit });
+                              setRollResult(null);
                             }}
-                            className="w-full py-1 bg-green-600 rounded text-sm mb-1"
+                            className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
                           >
-                            Roll d20
+                            Roll Attack
                           </button>
-                          <input
-                            type="number"
-                            placeholder="Or enter roll (1-20)"
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value);
-                              if (val >= 1 && val <= 20) {
-                                setRollResult({ roll: val, total: val + toHit });
-                              }
-                            }}
-                            className="w-full p-1 bg-gray-800 rounded text-white text-sm"
-                          />
-                          {rollResult && (
-                            <div className="mt-2 text-center text-sm">
-                              <div>d20: {rollResult.roll} + {toHit}</div>
-                              <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
+                          {rollModal?.attack?.id === attack.id && rollModal.type === 'attack' && (
+                            <div className="mt-2 p-2 bg-gray-600 rounded">
+                              <button
+                                onClick={() => {
+                                  const roll = rollDice(20);
+                                  setRollResult({ roll, total: roll + toHit });
+                                }}
+                                className="w-full py-1 bg-green-600 rounded text-sm mb-1"
+                              >
+                                Roll d20
+                              </button>
+                              <input
+                                type="text" inputMode="numeric"
+                                placeholder="Or enter roll (1-20)"
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value);
+                                  if (val >= 1 && val <= 20) {
+                                    setRollResult({ roll: val, total: val + toHit });
+                                  }
+                                }}
+                                className="w-full p-1 bg-gray-800 rounded text-white text-sm"
+                              />
+                              {rollResult && (
+                                <div className="mt-2 text-center text-sm">
+                                  <div>d20: {rollResult.roll} + {toHit}</div>
+                                  <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
 
-                    <div className="bg-gray-800 p-3 rounded">
-                      <div className="font-bold text-red-400 mb-2">DAMAGE</div>
-                      <div className="text-sm space-y-1 mb-2">
-                        <div>Dice: {attack.numDice}d{attack.dieType}</div>
-                        <div>Mod: {((abilityDamageMod + (attack.damageMod || 0)) >= 0 ? "+" : "")}{abilityDamageMod + (attack.damageMod || 0)}{(!isRanged && autoMods) ? " (STR)" : ""}</div>
-                        <div>Magic: +{(attack.damageMagic || 0) + weaponDmgMagic + (eff.magicDamage || 0)}</div>
-                        <div>Misc: +{(attack.damageMisc || 0) + weaponDmgMisc + (eff.miscDamage || 0)}</div>
-                        {char.damageBonus !== 0 && <div className="text-purple-400">Bonus: {char.damageBonus >= 0 ? '+' : ''}{char.damageBonus}</div>}
-                        <div className="font-bold text-lg border-t border-gray-600 pt-1 mt-1">
-                          Bonus: +{dmgBonus}
+                        <div className="bg-gray-800 p-3 rounded">
+                          <div className="font-bold text-red-400 mb-2">DAMAGE</div>
+                          <div className="text-sm space-y-1 mb-2">
+                            <div>Dice: {attack.numDice}d{attack.dieType}</div>
+                            <div>Mod: {((abilityDamageMod + (attack.damageMod || 0)) >= 0 ? "+" : "")}{abilityDamageMod + (attack.damageMod || 0)}{(!isRanged && autoMods) ? " (STR)" : ""}</div>
+                            <div>Magic: +{(attack.damageMagic || 0) + weaponDmgMagic + (eff.magicDamage || 0)}</div>
+                            <div>Misc: +{(attack.damageMisc || 0) + weaponDmgMisc + (eff.miscDamage || 0)}</div>
+                            {char.damageBonus !== 0 && <div className="text-purple-400">Bonus: {char.damageBonus >= 0 ? '+' : ''}{char.damageBonus}</div>}
+                            <div className="font-bold text-lg border-t border-gray-600 pt-1 mt-1">
+                              Bonus: +{dmgBonus}
+                            </div>
+                          </div>
+                          {(attack.useDamageDice ?? (Number(attack.numDice || 0) > 0)) && (Number(attack.numDice || 0) > 0) && (
+                            <button
+                              onClick={() => {
+                                setRollModal({ type: 'damage', attack, dmgBonus, diceCount: attack.numDice });
+                                setRollResult(null);
+                              }}
+                              className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
+                            >
+                              Roll Damage
+                            </button>
+                          )}
+                          {rollModal?.attack?.id === attack.id && rollModal.type === 'damage' && (
+                            <div className="mt-2 p-2 bg-gray-600 rounded">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              <label className="text-xs text-gray-300 whitespace-nowrap">Dice #</label>
+                              <input
+                                type="text" inputMode="numeric"
+                                value={rollModal.diceCount ?? attack.numDice}
+                                onChange={(e) => {
+                                  const v = e.target.value === '' ? '' : (parseInt(e.target.value || '0', 10) || 0);
+                                  setRollModal({ ...rollModal, diceCount: typeof v === 'number' ? Math.max(0, v) : v });
+                                }}
+                                className="w-14 p-1 bg-gray-800 rounded text-white text-xs text-center"
+                              />
+                              <div className="text-xs text-gray-400">d{attack.dieType}</div>
+                            </div>
+
+                              <button
+                                onClick={() => {
+                                  const rolls = [];
+                                  for (let i = 0; i < (rollModal.diceCount ?? attack.numDice); i++) {
+                                    rolls.push(rollDice(attack.dieType));
+                                  }
+                                  const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                  setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
+                                }}
+                                className="w-full py-1 bg-green-600 rounded text-sm mb-1"
+                              >
+                                Roll {rollModal.diceCount ?? attack.numDice}d{attack.dieType}
+                              </button>
+                              <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
+                              <div className="grid grid-cols-4 gap-1 mb-1">
+                                {Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => (
+                                  <input
+                                    key={i}
+                                    type="text" inputMode="numeric"
+                                    placeholder={`d${attack.dieType}`}
+                                    className="p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                    id={`dmg-${attack.id}-${i}`}
+                                  />
+                                ))}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const rolls = Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => {
+                                    const val = parseInt(document.getElementById(`dmg-${attack.id}-${i}`).value);
+                                    return val || 0;
+                                  });
+                                  if (rolls.every(r => r > 0)) {
+                                    const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                    setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
+                                  }
+                                }}
+                                className="w-full py-1 bg-blue-600 rounded text-xs"
+                              >
+                                Calculate
+                              </button>
+                              {rollResult?.rolls && (
+                                <div className="mt-2 text-center text-sm">
+                                  <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.diceTotal}</div>
+                                  <div>Bonus: +{dmgBonus}</div>
+                                  <div className="text-xl font-bold text-red-400">Total: {rollResult.total}</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      {(attack.useDamageDice ?? (Number(attack.numDice || 0) > 0)) && (Number(attack.numDice || 0) > 0) && (
+
+                      {/* Favorite and other actions */}
+                      <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => {
-                            setRollModal({ type: 'damage', attack, dmgBonus, diceCount: attack.numDice });
-                            setRollResult(null);
+                            const updated = (char.attacks || []).map(a =>
+                              a.id === attack.id ? { ...a, isFavorite: !a.isFavorite } : a
+                            );
+                            updateChar({ attacks: updated });
                           }}
-                          className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
+                          className={`px-3 py-1 rounded text-sm ${attack.isFavorite ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-gray-600 hover:bg-gray-500'}`}
                         >
-                          Roll Damage
+                          {attack.isFavorite ? '★ Favorited' : '☆ Favorite'}
                         </button>
-                      )}
-                      {rollModal?.attack?.id === attack.id && rollModal.type === 'damage' && (
-                        <div className="mt-2 p-2 bg-gray-600 rounded">
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <label className="text-xs text-gray-300 whitespace-nowrap">Dice #</label>
-                          <input
-                            type="number"
-                            value={rollModal.diceCount ?? attack.numDice}
-                            onChange={(e) => {
-                              const v = e.target.value === '' ? '' : (parseInt(e.target.value || '0', 10) || 0);
-                              setRollModal({ ...rollModal, diceCount: typeof v === 'number' ? Math.max(0, v) : v });
-                            }}
-                            className="w-14 p-1 bg-gray-800 rounded text-white text-xs text-center"
-                          />
-                          <div className="text-xs text-gray-400">d{attack.dieType}</div>
-                        </div>
-
-                          <button
-                            onClick={() => {
-                              const rolls = [];
-                              for (let i = 0; i < (rollModal.diceCount ?? attack.numDice); i++) {
-                                rolls.push(rollDice(attack.dieType));
-                              }
-                              const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                              setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
-                            }}
-                            className="w-full py-1 bg-green-600 rounded text-sm mb-1"
-                          >
-                            Roll {rollModal.diceCount ?? attack.numDice}d{attack.dieType}
-                          </button>
-                          <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                          <div className="grid grid-cols-4 gap-1 mb-1">
-                            {Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => (
-                              <input
-                                key={i}
-                                type="number"
-                                placeholder={`d${attack.dieType}`}
-                                className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                id={`dmg-${attack.id}-${i}`}
-                              />
-                            ))}
-                          </div>
-                          <button
-                            onClick={() => {
-                              const rolls = Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => {
-                                const val = parseInt(document.getElementById(`dmg-${attack.id}-${i}`).value);
-                                return val || 0;
-                              });
-                              if (rolls.every(r => r > 0)) {
-                                const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
-                              }
-                            }}
-                            className="w-full py-1 bg-blue-600 rounded text-xs"
-                          >
-                            Calculate
-                          </button>
-                          {rollResult?.rolls && (
-                            <div className="mt-2 text-center text-sm">
-                              <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.diceTotal}</div>
-                              <div>Bonus: +{dmgBonus}</div>
-                              <div className="text-xl font-bold text-red-400">Total: {rollResult.total}</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
@@ -3137,7 +3219,7 @@ if (editModal.type === 'acTracking' && char) {
                               Roll d20
                             </button>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               placeholder="Enter roll (1-20)"
                               onChange={(e) => {
                                 const val = parseInt(e.target.value);
@@ -3318,7 +3400,7 @@ if (editModal.type === 'acTracking' && char) {
                               <div className="flex items-center gap-2 mb-2">
                                 <label className="text-sm text-gray-400">Number of Dice:</label>
                                 <input
-                                  type="number"
+                                  type="text" inputMode="numeric"
                                   min="1"
                                   value={char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}
                                   onChange={(e) => {
@@ -3364,7 +3446,7 @@ if (editModal.type === 'acTracking' && char) {
                                     {Array.from({ length: char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1 }).map((_, i) => (
                                       <input
                                         key={i}
-                                        type="number"
+                                        type="text" inputMode="numeric"
                                         placeholder={spell.diceType}
                                         className="p-1 bg-gray-800 rounded text-white text-xs text-center"
                                         id={`spell-dice-${prepIds[0]}-${i}`}
@@ -3622,7 +3704,7 @@ if (editModal.type === 'acTracking' && char) {
                                 <div className="flex items-center gap-2 mb-2">
                                   <label className="text-sm text-gray-400">Number of Dice:</label>
                                   <input
-                                    type="number"
+                                    type="text" inputMode="numeric"
                                     min="1"
                                     value={(grimoire.entries || []).find(e => e.instanceId === group.entryIds[0])?.numDice || 1}
                                     onChange={(e) => {
@@ -3673,7 +3755,7 @@ if (editModal.type === 'acTracking' && char) {
                                       {Array.from({ length: (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1 }).map((_, i) => (
                                         <input
                                           key={i}
-                                          type="number"
+                                          type="text" inputMode="numeric"
                                           placeholder={spell.diceType}
                                           className="p-1 bg-gray-800 rounded text-white text-xs text-center"
                                           id={`grimoire-dice-${group.entryIds[0]}-${i}`}
@@ -3738,10 +3820,16 @@ if (editModal.type === 'acTracking' && char) {
                 New Day
               </button>
               <button
-                onClick={addMagicItem}
+                onClick={() => {
+                  // Reset form and pre-select magic casting
+                  resetItemForm();
+                  resetItemModal();
+                  updateItemModal({ isMagicCasting: true });
+                  setEditModal({ type: 'newItem', fromMagicInventory: true });
+                }}
                 className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold"
               >
-                Add Item
+                + Add Magic Item
               </button>
             </div>
           </div>
@@ -3892,7 +3980,7 @@ if (editModal.type === 'acTracking' && char) {
                                           <div className="flex flex-wrap items-center gap-2 mb-2">
                                             <label className="text-sm text-gray-400">Number of Dice:</label>
                                             <input
-                                              type="number"
+                                              type="text" inputMode="numeric"
                                               min="1"
                                               value={Number(g.entries?.[0]?.numDice || 1)}
                                               onChange={(e) => setMagicItemSpellNumDice(item.id, s.name, g.permanent, e.target.value)}
@@ -3936,7 +4024,7 @@ if (editModal.type === 'acTracking' && char) {
                                                   {Array.from({ length: Math.max(1, Number(g.entries?.[0]?.numDice || 1)) }).map((_, i) => (
                                                     <input
                                                       key={i}
-                                                      type="number"
+                                                      type="text" inputMode="numeric"
                                                       placeholder={s.diceType}
                                                       className="p-1 bg-gray-800 rounded text-white text-xs text-center"
                                                       id={`mi-dice-${item.id}-${s.id || s.name}-${g.permanent ? 'p' : 't'}-${i}`}
@@ -4097,7 +4185,7 @@ if (editModal.type === 'acTracking' && char) {
                     <div className="w-28">
                       <label className="block text-sm text-gray-300 mb-1">Copies</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         min={1}
                         max={Math.max(1, remaining)}
                         value={invCopies}
@@ -4187,7 +4275,7 @@ if (editModal.type === 'acTracking' && char) {
                                   <div className="mt-2 flex flex-col items-end gap-2">
                                     <div className="flex items-center gap-2">
                                       <input
-                                        type="number"
+                                        type="text" inputMode="numeric"
                                         min={1}
                                         max={99}
                                         value={Number(g.entries?.[0]?.numDice || 1)}
@@ -4252,7 +4340,7 @@ if (editModal.type === 'acTracking' && char) {
                                                 <input
                                                   key={i}
                                                   id={`mi-die-${item.id}-${s.id || s.name}-${g.permanent ? "p" : "t"}-${i}`}
-                                                  type="number"
+                                                  type="text" inputMode="numeric"
                                                   min={1}
                                                   max={sides}
                                                   placeholder={`1-${sides}`}
@@ -4543,7 +4631,12 @@ if (editModal.type === 'acTracking' && char) {
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm('Delete this note?')) deleteNote(n.id);
+                            setConfirmModal({
+                              message: 'Delete this note?',
+                              confirmText: 'Delete',
+                              danger: true,
+                              onConfirm: () => deleteNote(n.id)
+                            });
                           }}
                           className="p-2.5 bg-red-600 rounded hover:bg-red-700 active:bg-red-500"
                           aria-label="Delete note"
@@ -4593,7 +4686,7 @@ if (editModal.type === 'acTracking' && char) {
                             <Minus size={20} />
                           </button>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             min="0"
                             value={diceConfig[`d${sides}`]}
                             onChange={(e) => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, e.target.value === '' ? '' : (parseInt(e.target.value) || 0)) })}
@@ -4857,7 +4950,7 @@ if (editModal.type === 'acTracking' && char) {
                               Roll d20
                             </button>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               placeholder="Or enter roll (1-20)"
                               onChange={(e) => {
                                 const val = parseInt(e.target.value);
@@ -4896,7 +4989,7 @@ if (editModal.type === 'acTracking' && char) {
                               {Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => (
                                 <input
                                   key={i}
-                                  type="number"
+                                  type="text" inputMode="numeric"
                                   placeholder={`d${attack.dieType}`}
                                   className="p-1 bg-gray-800 rounded text-white text-xs text-center"
                                   id={`comp-dmg-${companion.id}-${attack.id}-${i}`}
@@ -5172,7 +5265,7 @@ if (editModal.type === 'acTracking' && char) {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-bold text-lg">
-                    Total Weight: {char.inventory.reduce((s, i) => s + (i.weightPer * i.quantity), 0).toFixed(2)} lb
+                    Total Weight: {getTotalWeight().toFixed(2)} lb
                   </div>
                   <div className="font-bold text-lg">
                     Total EV: {getInventoryTotalEV()} ({getEncumbranceStatusLabel()})
@@ -5347,7 +5440,7 @@ if (editModal.type === 'acTracking' && char) {
                 {editModal.type === 'bonusModifiers' && 'Bonus Modifiers (Bless/Curse)'}
                 {editModal.type === 'saveModifiers' && 'Save Modifiers (Bless/Curse)'}
                 {editModal.type === 'wallet' && 'Wallet'}
-                {editModal.type === 'newItem' && 'Add New Item'}
+                {editModal.type === 'newItem' && (editModal.fromMagicInventory ? 'Add Magic Item' : 'Add New Item')}
                 {editModal.type === 'editItem' && 'Edit Item'}
                 {editModal.type === 'newCompanion' && 'Add New Companion'}
                 {editModal.type === 'editCompanion' && 'Edit Companion'}
@@ -5898,17 +5991,21 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Base Speed (feet)</label>
                   <input
-                    type="number"
-                    value={modalForms.speedBase}
-                    onChange={(e) => updateModalForm({ speedBase: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                    type="text"
+                    inputMode="numeric"
+                    value={modalForms.speedBase === 0 ? '' : modalForms.speedBase}
+                    onChange={(e) => updateModalForm({ speedBase: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                    placeholder="30"
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
 
                   <label className="block text-sm text-gray-400 mb-2 mt-3">Bonus (feet)</label>
                   <input
-                    type="number"
-                    value={modalForms.speedBonus}
-                    onChange={(e) => updateModalForm({ speedBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                    type="text"
+                    inputMode="numeric"
+                    value={modalForms.speedBonus === 0 ? '' : modalForms.speedBonus}
+                    onChange={(e) => updateModalForm({ speedBonus: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                    placeholder="0"
                     className="w-full p-2 bg-gray-700 rounded text-white"
                   />
 
@@ -5985,24 +6082,31 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Current HP</label>
                     <input
-                      type="number"
-                      value={modalForms.hpCurrent}
-                      onChange={(e) => updateModalForm({ hpCurrent: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={modalForms.hpCurrent === 0 ? '' : modalForms.hpCurrent}
+                      onChange={(e) => updateModalForm({ hpCurrent: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      min={0}
-                      max={calculateMaxHP()}
-                      step={1}
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Change (add or subtract)</label>
                     <input
-                      type="number"
-                      value={modalForms.hpDelta}
-                      onChange={(e) => updateModalForm({ hpDelta: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={modalForms.hpDelta === 0 ? '' : modalForms.hpDelta}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || val === '-') {
+                          updateModalForm({ hpDelta: val === '-' ? val : 0 });
+                        } else {
+                          updateModalForm({ hpDelta: parseInt(val) || 0 });
+                        }
+                      }}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white"
-                      step={1}
                     />
                     <div className="text-xs text-gray-400 mt-1">
                       Example: enter -5 for damage, or 8 for healing.
@@ -6011,7 +6115,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   <button
                     onClick={() => {
-                      const next = clamp(modalForms.hpCurrent + modalForms.hpDelta, 0, calculateMaxHP());
+                      const delta = typeof modalForms.hpDelta === 'string' ? 0 : modalForms.hpDelta;
+                      const next = clamp(modalForms.hpCurrent + delta, 0, calculateMaxHP());
                       updateChar({ hp: next, currentHp: next });
                       setEditModal(null);
                     }}
@@ -6032,7 +6137,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-sm font-bold text-blue-400 mb-1">HP Hit Die</label>
                     <div className="flex items-center gap-3">
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={hpDieDraft}
                         onChange={(e) => setHpDieDraft(parseInt(e.target.value || '12', 10) || 12)}
                         className="w-28 p-2 bg-gray-700 rounded text-white"
@@ -6050,9 +6155,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="mb-3 p-2 bg-gray-900 rounded">
                     <label className="block text-sm font-bold text-green-400 mb-1">Bonus HP (from items, feats, etc.)</label>
                     <input
-                      type="number"
-                      value={modalForms.hpBonus}
-                      onChange={(e) => updateModalForm({ hpBonus: e.target.value === '' ? '' : e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={modalForms.hpBonus === 0 ? '' : modalForms.hpBonus}
+                      onChange={(e) => updateModalForm({ hpBonus: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white"
                     />
                   </div>
@@ -6074,7 +6181,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div key={i} className="flex flex-wrap items-center gap-2">
                           <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={rawStr ?? ''}
                             disabled={!prevOk}
                             onChange={(e) => {
@@ -6216,9 +6323,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm font-bold text-gray-300 mb-1">Base AC</label>
                       <input
-                        type="number"
-                        value={modalForms.acBase}
-                        onChange={(e) => updateModalForm({ acBase: parseInt(e.target.value) || 10 })}
+                        type="text"
+                        inputMode="numeric"
+                        value={modalForms.acBase === 10 ? '' : modalForms.acBase}
+                        onChange={(e) => updateModalForm({ acBase: e.target.value === '' ? 10 : (parseInt(e.target.value) || 10) })}
+                        placeholder="10"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6385,7 +6494,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       {acUseDex ? (
                         <>
                         <input
-                          type="number"
+                          type="text" inputMode="numeric"
                           value={(getEncumbranceStatus() === 'overburdened') ? 0 : calcMod(getAttributeTotal('dex'))}
                           readOnly
                           className="w-full p-2 bg-gray-700 rounded text-white opacity-90"
@@ -6403,9 +6512,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         </>
                       ) : (
                         <input
-                          type="number"
-                          value={modalForms.acMod}
-                          onChange={(e) => updateModalForm({ acMod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                          type="text"
+                          inputMode="numeric"
+                          value={modalForms.acMod === 0 ? '' : modalForms.acMod}
+                          onChange={(e) => updateModalForm({ acMod: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                          placeholder="0"
                           className="w-full p-2 bg-gray-700 rounded text-white"
                         />
                       )}
@@ -6414,9 +6525,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm font-bold text-gray-300 mb-1">Magic</label>
                       <input
-                        type="number"
-                        value={modalForms.acMagic}
-                        onChange={(e) => updateModalForm({ acMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={modalForms.acMagic === 0 ? '' : modalForms.acMagic}
+                        onChange={(e) => updateModalForm({ acMagic: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="0"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6424,18 +6537,29 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm font-bold text-gray-300 mb-1">Misc</label>
                       <input
-                        type="number"
-                        value={modalForms.acMisc}
-                        onChange={(e) => updateModalForm({ acMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={modalForms.acMisc === 0 ? '' : modalForms.acMisc}
+                        onChange={(e) => updateModalForm({ acMisc: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="0"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-green-400 mb-1">Bonus (temporary, use negative for penalties)</label>
                       <input
-                        type="number"
-                        value={modalForms.acBonus}
-                        onChange={(e) => updateModalForm({ acBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={modalForms.acBonus === 0 ? '' : modalForms.acBonus}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || val === '-') {
+                            updateModalForm({ acBonus: val === '-' ? val : 0 });
+                          } else {
+                            updateModalForm({ acBonus: parseInt(val) || 0 });
+                          }
+                        }}
+                        placeholder="0"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6495,7 +6619,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <div key={i} className="flex flex-wrap items-center gap-2">
                         <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
                         <input
-                          type="number"
+                          type="text" inputMode="numeric"
                           defaultValue={xp}
                           className="flex-1 p-2 bg-gray-700 rounded text-white"
                           id={`xp-level-${i}`}
@@ -6726,7 +6850,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="text-sm text-gray-400 mb-3">Temporary bonuses/penalties from bless, curse, etc. Use negative numbers for penalties. This applies to ALL saving throws.</div>
                   <label className="block text-sm text-gray-400 mb-2">Save Bonus</label>
                   <input
-                    type="number"
+                    type="text" inputMode="numeric"
                     value={modalForms.saveBonus}
                     onChange={(e) => updateModalForm({ saveBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
@@ -6898,37 +7022,42 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   
                   <div className="grid grid-cols-2 gap-3 mb-3">
-                    {/* Column 1 */}
-                    <label className="flex items-center gap-2 text-sm text-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={itemIsArmor}
-                        onChange={(e) => setItemIsArmor(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      Armor
-                    </label>
+                    {/* Show all options normally, but only Magic Casting when from Magic Inventory */}
+                    {!editModal.fromMagicInventory && (
+                      <>
+                        {/* Column 1 */}
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsArmor}
+                            onChange={(e) => setItemIsArmor(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Armor
+                        </label>
 
-                    {/* Column 2 */}
-                    <label className="flex items-center gap-2 text-sm text-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={itemHasAttrBonus}
-                        onChange={(e) => setItemHasAttrBonus(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      Stat Bonus
-                    </label>
+                        {/* Column 2 */}
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemHasAttrBonus}
+                            onChange={(e) => setItemHasAttrBonus(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Stat Bonus
+                        </label>
 
-                    <label className="flex items-center gap-2 text-sm text-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={itemIsShield}
-                        onChange={(e) => setItemIsShield(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      Shield
-                    </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsShield}
+                            onChange={(e) => setItemIsShield(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Shield
+                        </label>
+                      </>
+                    )}
 
                     <label className="flex items-center gap-2 text-sm text-gray-200">
                       <input
@@ -6940,29 +7069,34 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           if (!checked) setItemIsGrimoire(false);
                         }}
                         className="w-4 h-4"
+                        disabled={editModal.fromMagicInventory}
                       />
-                      Magic Casting
+                      Magic Casting {editModal.fromMagicInventory && <span className="text-gray-500">(required)</span>}
                     </label>
 
-                    <label className="flex items-center gap-2 text-sm text-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={itemIsWeapon}
-                        onChange={(e) => setItemIsWeapon(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      Weapon
-                    </label>
+                    {!editModal.fromMagicInventory && (
+                      <>
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsWeapon}
+                            onChange={(e) => setItemIsWeapon(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Weapon
+                        </label>
 
-                    <label className="flex items-center gap-2 text-sm text-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={itemHasEffects}
-                        onChange={(e) => setItemHasEffects(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      Weapon Effects
-                    </label>
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemHasEffects}
+                            onChange={(e) => setItemHasEffects(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Weapon Effects
+                        </label>
+                      </>
+                    )}
                   </div>
 
                     {itemIsMagicCasting && (
@@ -7020,7 +7154,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div className="mb-3">
                       <label className="block text-sm text-gray-400 mb-1">AC Bonus</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={itemForm.acBonus}
                         onChange={(e) => updateItemForm({ acBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7037,7 +7171,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">Damage Dice #</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             min="1"
                             value={itemWeaponDamageNumDice}
                             onChange={(e) => setItemWeaponDamageNumDice(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
@@ -7073,7 +7207,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">To Hit: Magic</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={itemWeaponToHitMagic}
                             onChange={(e) => setItemWeaponToHitMagic(parseInt(e.target.value || '0', 10) || 0)}
                             className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7083,7 +7217,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">To Hit: Misc</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={itemWeaponToHitMisc}
                             onChange={(e) => setItemWeaponToHitMisc(parseInt(e.target.value || '0', 10) || 0)}
                             className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7093,7 +7227,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">Damage: Magic</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={itemWeaponDamageMagic}
                             onChange={(e) => setItemWeaponDamageMagic(parseInt(e.target.value || '0', 10) || 0)}
                             className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7103,7 +7237,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">Damage: Misc</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={itemWeaponDamageMisc}
                             onChange={(e) => setItemWeaponDamageMisc(parseInt(e.target.value || '0', 10) || 0)}
                             className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7290,7 +7424,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Misc To Hit</label>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               value={newEffectMiscToHit}
                               onChange={(e) => setNewEffectMiscToHit(parseInt(e.target.value || '0', 10) || 0)}
                               className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7299,7 +7433,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Misc Damage</label>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               value={newEffectMiscDamage}
                               onChange={(e) => setNewEffectMiscDamage(parseInt(e.target.value || '0', 10) || 0)}
                               className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7308,7 +7442,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Magic To Hit</label>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               value={newEffectMagicToHit}
                               onChange={(e) => setNewEffectMagicToHit(parseInt(e.target.value || '0', 10) || 0)}
                               className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7317,7 +7451,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Magic Damage</label>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               value={newEffectMagicDamage}
                               onChange={(e) => setNewEffectMagicDamage(parseInt(e.target.value || '0', 10) || 0)}
                               className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7328,7 +7462,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div className="mb-3">
                           <label className="block text-xs text-gray-400 mb-1">AC</label>
                           <input
-                            type="number"
+                            type="text" inputMode="numeric"
                             value={newEffectAC}
                             onChange={(e) => setNewEffectAC(parseInt(e.target.value || '0', 10) || 0)}
                             className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7466,14 +7600,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Spell Save DC</label>
                   <input
-                    type="number"
+                    type="text" inputMode="numeric"
                     value={modalForms.spellDC}
                     onChange={(e) => updateModalForm({ spellDC: parseInt(e.target.value) || 10 })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
                   />
                   <label className="block text-sm text-gray-400 mb-2">Spell Attack Bonus</label>
                   <input
-                    type="number"
+                    type="text" inputMode="numeric"
                     value={modalForms.spellAtk}
                     onChange={(e) => updateModalForm({ spellAtk: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
@@ -7501,7 +7635,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <div key={level} className="flex items-center gap-2">
                         <label className="w-32 text-sm font-bold">{level === 0 ? 'Cantrips' : `Level ${level}`}:</label>
                         <input
-                          type="number"
+                          type="text" inputMode="numeric"
                           min="0"
                           defaultValue={slots}
                           className="flex-1 p-2 bg-gray-700 rounded text-white"
@@ -7542,7 +7676,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <input
                     value={modalForms.magicItemCapacity}
                     onChange={(e) => updateModalForm({ magicItemCapacity: e.target.value })}
-                    type="number"
+                    type="text" inputMode="numeric"
                     min={1}
                     className="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded"
                   />
@@ -7720,11 +7854,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   
                   <label className="block text-sm text-gray-400 mb-1">Spell Level (0-9)</label>
                   <input
-                    type="number"
-                    min="0"
-                    max="9"
-                    value={spellForm.level}
-                    onChange={(e) => updateSpellForm({ level: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                    type="text"
+                    inputMode="numeric"
+                    value={spellForm.level === 0 ? '' : spellForm.level}
+                    onChange={(e) => updateSpellForm({ level: e.target.value === '' ? 0 : Math.min(9, Math.max(0, parseInt(e.target.value) || 0)) })}
+                    placeholder="0"
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
                   />
                   
@@ -7765,7 +7899,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <label className="block text-sm text-gray-400 mb-1">Copies</label>
                         <input
                           id="magic-item-spell-copies"
-                          type="number"
+                          type="text" inputMode="numeric"
                           min={1}
                           className="w-full p-2 bg-gray-700 rounded text-white"
                           defaultValue={1}
@@ -7975,7 +8109,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Copies</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         min={1}
                         value={modalForms.magicItemSpellCopies}
                         onChange={(e) => updateModalForm({ magicItemSpellCopies: e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1) })}
@@ -8051,7 +8185,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div>
                             <label className="block text-sm text-gray-400 mb-1">Copies</label>
                             <input
-                              type="number"
+                              type="text" inputMode="numeric"
                               min={1}
                               max={99}
                               value={miSpellForm.copies}
@@ -8086,7 +8220,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         <label className="block text-sm text-gray-400 mb-1">Spell Level (0-9)</label>
                         <input
-                          type="number"
+                          type="text" inputMode="numeric"
                           min="0"
                           max="9"
                           value={miSpellForm.level}
@@ -8351,18 +8485,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Current HP</label>
                       <input
-                        type="number"
-                        value={companionForm.hp}
-                        onChange={(e) => updateCompanionForm({ hp: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={companionForm.hp === 0 ? '' : companionForm.hp}
+                        onChange={(e) => updateCompanionForm({ hp: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="10"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Max HP</label>
                       <input
-                        type="number"
-                        value={companionForm.maxHp}
-                        onChange={(e) => updateCompanionForm({ maxHp: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={companionForm.maxHp === 0 ? '' : companionForm.maxHp}
+                        onChange={(e) => updateCompanionForm({ maxHp: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="10"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -8372,18 +8510,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">AC</label>
                       <input
-                        type="number"
-                        value={companionForm.ac}
-                        onChange={(e) => updateCompanionForm({ ac: e.target.value === '' ? '' : (parseInt(e.target.value) || 10) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={companionForm.ac === 0 ? '' : companionForm.ac}
+                        onChange={(e) => updateCompanionForm({ ac: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="10"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Ground Speed (ft)</label>
                       <input
-                        type="number"
-                        value={companionForm.groundSpeed}
-                        onChange={(e) => updateCompanionForm({ groundSpeed: e.target.value === '' ? '' : (parseInt(e.target.value) || 30) })}
+                        type="text"
+                        inputMode="numeric"
+                        value={companionForm.groundSpeed === 0 ? '' : companionForm.groundSpeed}
+                        onChange={(e) => updateCompanionForm({ groundSpeed: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        placeholder="30"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -8391,9 +8533,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   
                   <label className="block text-sm text-gray-400 mb-1">Flying Speed (ft, 0 if none)</label>
                   <input
-                    type="number"
-                    value={companionForm.flySpeed}
-                    onChange={(e) => updateCompanionForm({ flySpeed: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                    type="text"
+                    inputMode="numeric"
+                    value={companionForm.flySpeed === 0 ? '' : companionForm.flySpeed}
+                    onChange={(e) => updateCompanionForm({ flySpeed: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                    placeholder="0"
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
                   />
                   
@@ -8411,9 +8555,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div key={key}>
                           <label className="block text-xs text-gray-400 mb-1">{label}</label>
                           <input
-                            type="number"
-                            value={companionForm[field]}
-                            onChange={(e) => updateCompanionForm({ [field]: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                            type="text"
+                            inputMode="numeric"
+                            value={companionForm[field] === 0 ? '' : companionForm[field]}
+                            onChange={(e) => updateCompanionForm({ [field]: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                            placeholder="0"
                             className="w-full p-2 bg-gray-700 rounded text-white"
                           />
                         </div>
@@ -8500,7 +8646,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Number of Dice</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         min={0}
                         value={compAttackForm.numDice}
                         onChange={(e) => updateCompAttackForm({ numDice: e.target.value === '' ? '' : (parseInt(e.target.value) || 1) })}
@@ -8510,7 +8656,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.dieType}
                         onChange={(e) => updateCompAttackForm({ dieType: e.target.value === '' ? '' : (parseInt(e.target.value) || 6) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8522,7 +8668,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">BTH (Base To Hit)</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.bth}
                         onChange={(e) => updateCompAttackForm({ bth: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8531,7 +8677,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Modifier</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.mod}
                         onChange={(e) => updateCompAttackForm({ mod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8541,7 +8687,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">To-Hit Magic</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.toHitMagic}
                         onChange={(e) => updateCompAttackForm({ toHitMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8550,7 +8696,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">To-Hit Misc</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.toHitMisc}
                         onChange={(e) => updateCompAttackForm({ toHitMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8563,7 +8709,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   
                   <label className="block text-sm text-gray-400 mb-1">Damage Bonus</label>
                   <input
-                    type="number"
+                    type="text" inputMode="numeric"
                     value={compAttackForm.damageBonus}
                     onChange={(e) => updateCompAttackForm({ damageBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
@@ -8573,7 +8719,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Damage Magic</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.damageMagic}
                         onChange={(e) => updateCompAttackForm({ damageMagic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8582,7 +8728,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Damage Misc</label>
                       <input
-                        type="number"
+                        type="text" inputMode="numeric"
                         value={compAttackForm.damageMisc}
                         onChange={(e) => updateCompAttackForm({ damageMisc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
@@ -8875,6 +9021,32 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-app Confirmation Modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-[60]">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-sm">
+            <div className="text-lg mb-4">{confirmModal.message}</div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 py-3 bg-gray-600 rounded-lg font-semibold hover:bg-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  confirmModal.onConfirm?.();
+                  setConfirmModal(null);
+                }}
+                className={`flex-1 py-3 rounded-lg font-semibold ${confirmModal.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {confirmModal.confirmText || 'Confirm'}
+              </button>
             </div>
           </div>
         </div>
