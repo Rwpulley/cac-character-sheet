@@ -321,13 +321,18 @@ const DomStepper = React.memo(function DomStepper({
         <input
           type="text"
           inputMode="numeric"
-          value={String(val)}
+          value={val === 0 ? '' : String(val)}
           onChange={(e) => {
             const raw = String(e.target.value || '');
+            if (raw === '' || raw === '-') {
+              setVal(0);
+              return;
+            }
             const cleaned = raw.replace(/(?!^)-/g, '').replace(/[^\d-]/g, '');
             const next = parseInt(cleaned, 10);
-            setVal(Number.isFinite(next) ? next : 0);
+            setVal(Number.isFinite(next) ? clamp(next, min, max) : 0);
           }}
+          placeholder="0"
           className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 px-1"
         />
 
@@ -621,6 +626,18 @@ export default function CaCCharacterSheet() {
   // In-app confirmation modal (replaces browser confirm())
   const [confirmModal, setConfirmModal] = useState(null);
   // Usage: setConfirmModal({ message: 'Delete?', onConfirm: () => doSomething() })
+
+  // Toast notification system
+  const [toast, setToast] = useState(null);
+  // Usage: showToast('Message', 'error') or showToast('Success!', 'success')
+  const showToast = useCallback((message, type = 'info', duration = 3000) => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), duration);
+  }, []);
+
+  // Collapsible list states
+  const [expandedInventoryIds, setExpandedInventoryIds] = useState({});
+  const [expandedSpellLevels, setExpandedSpellLevels] = useState({});
 
   // Notes tab editor
   const [noteEditor, setNoteEditor] = useState({
@@ -4455,94 +4472,90 @@ if (editModal.type === 'acTracking' && char) {
 
             {char.spellsLearned.length > 0 && (
               <div 
-                className="space-y-4 overflow-y-auto pr-2" 
+                className="space-y-2 overflow-y-auto pr-2" 
                 style={{ maxHeight: 'calc(100vh - 200px)' }}
               >
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => {
                   const spellsAtLevel = char.spellsLearned.filter(s => s.level === level).slice().sort(sortSpellsLevelName);
                   if (spellsAtLevel.length === 0) return null;
+                  const isLevelExpanded = expandedSpellLevels[level] !== false; // Default to expanded
                   
                   return (
-                    <div key={level} className="bg-gray-700 p-4 rounded-lg">
-                      <h3 className="font-bold text-xl mb-3 text-blue-400">Level {level}</h3>
-                      <div className="space-y-3">
-                        {spellsAtLevel.map(spell => {
-                          const preparedCount = char.spellsPrepared.filter(s => s.id === spell.id).length;
-                          const canPrepare = preparedCount < char.spellSlots[level];
-                          
-                          return (
-                            <div key={spell.id} className="bg-gray-800 p-3 rounded">
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <div className="font-bold text-lg">{spell.name}</div>
-                                    <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
-                                      <Edit2 size={12} />
+                    <div key={level} className="bg-gray-700 rounded-lg overflow-hidden">
+                      {/* Level Header - Collapsible */}
+                      <div 
+                        className="p-3 cursor-pointer hover:bg-gray-600 transition-colors flex items-center justify-between"
+                        onClick={() => setExpandedSpellLevels(prev => ({ ...prev, [level]: !isLevelExpanded }))}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{isLevelExpanded ? '▼' : '▶'}</span>
+                          <h3 className="font-bold text-lg text-blue-400">Level {level}</h3>
+                          <span className="text-gray-400 text-sm">({spellsAtLevel.length} spell{spellsAtLevel.length !== 1 ? 's' : ''})</span>
+                        </div>
+                      </div>
+
+                      {/* Spells in this level */}
+                      {isLevelExpanded && (
+                        <div className="px-3 pb-3 space-y-2">
+                          {spellsAtLevel.map(spell => {
+                            const preparedCount = char.spellsPrepared.filter(s => s.id === spell.id).length;
+                            const canPrepare = preparedCount < char.spellSlots[level];
+                            
+                            return (
+                              <div key={spell.id} className="bg-gray-800 p-3 rounded">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <div className="font-bold">{spell.name}</div>
+                                      <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
+                                        <Edit2 size={12} />
+                                      </button>
+                                    </div>
+                                    <div className="text-sm text-gray-400">
+                                      {spell.prepTime} • {spell.range} • {spell.duration}
+                                      {spell.verbal && ' • V'}{spell.somatic && 'S'}{spell.material && 'M'}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {preparedCount > 0 && (
+                                      <>
+                                        <button
+                                          onClick={() => {
+                                            const preparedSpells = char.spellsPrepared.filter(s => s.id === spell.id);
+                                            if (preparedSpells.length > 0) {
+                                              const toRemove = preparedSpells[0];
+                                              updateChar({ 
+                                                spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== toRemove.prepId)
+                                              });
+                                            }
+                                          }}
+                                          className="p-1 bg-red-600 rounded hover:bg-red-700"
+                                        >
+                                          <Minus size={14} />
+                                        </button>
+                                        <span className="text-sm font-bold w-6 text-center">{preparedCount}</span>
+                                      </>
+                                    )}
+                                    <button
+                                      onClick={() => {
+                                        if (canPrepare) {
+                                          updateChar({ 
+                                            spellsPrepared: [...char.spellsPrepared, { ...spell, prepId: Date.now(), concentrating: false, numDice: 1 }] 
+                                          });
+                                        }
+                                      }}
+                                      disabled={!canPrepare}
+                                      className={`p-1 rounded ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
+                                    >
+                                      <Plus size={14} />
                                     </button>
                                   </div>
-                                  <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
-                                  
-                                  <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                                    <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
-                                    <div><span className="text-gray-400">Range:</span> {spell.range}</div>
-                                    <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
-                                    <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
-                                    <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
-                                    {spell.hasDiceRoll && (
-                                      <div><span className="text-gray-400">Dice:</span> {spell.diceType}</div>
-                                    )}
-                                  </div>
-                                  
-                                  <div className="text-sm mb-1">
-                                    <span className="text-gray-400">Components:</span> 
-                                    {spell.verbal && ' V'}
-                                    {spell.somatic && ' S'}
-                                    {spell.material && ` M (${spell.materialDesc})`}
-                                  </div>
-                                  
-                                  {spell.spellResistance && (
-                                    <div className="text-xs text-yellow-400">Spell Resistance: Yes</div>
-                                  )}
-                                </div>
-                                <div className="flex flex-col gap-1 items-center">
-                                  <button
-                                    onClick={() => {
-                                      if (canPrepare) {
-                                        updateChar({ 
-                                          spellsPrepared: [...char.spellsPrepared, { ...spell, prepId: Date.now(), concentrating: false, numDice: 1 }] 
-                                        });
-                                      }
-                                    }}
-                                    disabled={!canPrepare}
-                                    className={`px-3 py-1 rounded text-sm ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
-                                  >
-                                    <Plus size={16} />
-                                  </button>
-                                  {preparedCount > 0 && (
-                                    <>
-                                      <button
-                                        onClick={() => {
-                                          const preparedSpells = char.spellsPrepared.filter(s => s.id === spell.id);
-                                          if (preparedSpells.length > 0) {
-                                            const toRemove = preparedSpells[0];
-                                            updateChar({ 
-                                              spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== toRemove.prepId)
-                                            });
-                                          }
-                                        }}
-                                        className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 text-sm"
-                                      >
-                                        <Minus size={16} />
-                                      </button>
-                                      <div className="text-sm font-bold text-gray-400">{preparedCount}</div>
-                                    </>
-                                  )}
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -5102,159 +5115,184 @@ if (editModal.type === 'acTracking' && char) {
             {char.inventory.length > 0 && (
               <VirtualizedList
                 items={sortedInventory}
-                itemHeight={180}
+                itemHeight={70}
                 containerHeight={Math.min(600, window.innerHeight - 300)}
                 emptyMessage="No items yet"
                 renderItem={(item) => {
                   const totalWeight = item.weightPer * item.quantity;
+                  const isExpanded = expandedInventoryIds[item.id];
                   return (
-                    <div className="bg-gray-700 p-4 rounded">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-bold text-lg">{item.name}</div>
-                        <button onClick={() => setEditModal({ type: 'editItem', item })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
-                          <Edit2 size={16} />
-                        </button>
+                    <div className="bg-gray-700 rounded overflow-hidden">
+                      {/* Collapsed Header */}
+                      <div 
+                        className="p-3 cursor-pointer hover:bg-gray-600 transition-colors"
+                        onClick={() => setExpandedInventoryIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span>{isExpanded ? '▼' : '▶'}</span>
+                              <span className="font-bold">{item.name}</span>
+                              <span className="text-gray-400">×{item.quantity}</span>
+                            </div>
+                            <div className="text-sm text-gray-400 ml-5">
+                              {totalWeight.toFixed(1)} lb • EV: {item.ev}
+                              {item.worthAmount > 0 && ` • ${item.worthAmount} ${(item.worthUnit || 'gp').toUpperCase()}`}
+                            </div>
+                          </div>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editItem', item }); }} 
+                            className="p-2 bg-gray-600 rounded hover:bg-gray-500 flex-shrink-0"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-sm text-gray-300 mb-3">{item.description}</div>
-                      {normalizeItemEffects(item).length > 0 && (
-                        <div className="text-xs text-gray-200 mb-3">
-                          <div className="text-gray-400">Effects:</div>
-                          <div className="mt-1 space-y-1">
-                            {normalizeItemEffects(item).map((e) => (
-                              <div key={e.id || `${item.id}-${e.kind}-${e.appliesTo}-${e.targetId || ''}`}>
-                                {e.kind === 'attack' && (
-                                  <span>
-                                    Attack: {e.appliesTo === 'unarmed' ? 'Unarmed' : 'Weapon'}
-                                    {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
-                                    {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
-                                    {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
-                                    {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
-                                    {e.appliesTo === 'weapon' && e.targetId ? (() => {
-                                      const w = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                      return w ? ` (${w.name})` : '';
-                                    })() : ''}
-                                  </span>
-                                )}
-                                {e.kind === 'ac' && (
-                                  <span>
-                                    AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0} ({e.appliesTo || 'ac'})
-                                    {e.targetId ? (() => {
-                                      const t = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                      return t ? ` (${t.name})` : '';
-                                    })() : ''}
-                                  </span>
-                                )}
+
+                      {/* Expanded Content */}
+                      {isExpanded && (
+                        <div className="px-3 pb-3 border-t border-gray-600">
+                          {item.description && (
+                            <div className="text-sm text-gray-300 mt-2 mb-3">{item.description}</div>
+                          )}
+                          
+                          {normalizeItemEffects(item).length > 0 && (
+                            <div className="text-xs text-gray-200 mb-3">
+                              <div className="text-gray-400">Effects:</div>
+                              <div className="mt-1 space-y-1">
+                                {normalizeItemEffects(item).map((e) => (
+                                  <div key={e.id || `${item.id}-${e.kind}-${e.appliesTo}-${e.targetId || ''}`}>
+                                    {e.kind === 'attack' && (
+                                      <span>
+                                        Attack: {e.appliesTo === 'unarmed' ? 'Unarmed' : 'Weapon'}
+                                        {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
+                                        {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
+                                        {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
+                                        {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
+                                        {e.appliesTo === 'weapon' && e.targetId ? (() => {
+                                          const w = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
+                                          return w ? ` (${w.name})` : '';
+                                        })() : ''}
+                                      </span>
+                                    )}
+                                    {e.kind === 'ac' && (
+                                      <span>
+                                        AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0} ({e.appliesTo || 'ac'})
+                                        {e.targetId ? (() => {
+                                          const t = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
+                                          return t ? ` (${t.name})` : '';
+                                        })() : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
-                            ))}
+                            </div>
+                          )}
+
+                          {/* Display Stat Bonuses */}
+                          {item.hasAttrBonus && (() => {
+                            const bonuses = Array.isArray(item.attrBonuses) 
+                              ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
+                              : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
+                                  ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
+                                  : []);
+                            if (bonuses.length === 0) return null;
+                            return (
+                              <div className="text-xs text-gray-200 mb-3">
+                                <div className="text-gray-400">Stat Bonuses:</div>
+                                <div className="mt-1 flex flex-wrap gap-2">
+                                  {bonuses.map((b, idx) => (
+                                    <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
+                                      {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400">Qty</span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const nextInv = (char.inventory || [])
+                                      .map(i =>
+                                        i.id === item.id
+                                          ? { ...i, quantity: Math.max(0, i.quantity - 1) }
+                                          : i
+                                      )
+                                      .filter(i => (i.quantity || 0) > 0);
+
+                                    const updated = nextInv.find(i => String(i.id) === String(item.id));
+                                    let nextMagicItems = char.magicItems || [];
+                                    if (updated) {
+                                      nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
+                                    } else {
+                                      nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
+                                    }
+
+                                    updateChar({ inventory: nextInv, magicItems: nextMagicItems });
+                                  }} 
+                                  className="p-1 bg-red-600 rounded hover:bg-red-700"
+                                >
+                                  <Minus size={14} />
+                                </button>
+                                <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newInv = char.inventory.map(i =>
+                                      i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+                                    );
+                                    const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
+                                    const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
+                                    updateChar({ inventory: newInv, magicItems: nextMagicItems });
+                                  }} 
+                                  className="p-1 bg-green-600 rounded hover:bg-green-700"
+                                >
+                                  <Plus size={14} />
+                                </button>
+                              </div>
+
+                              <div className="text-sm text-gray-300">
+                                <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
+                                <span className="font-semibold text-white">{item.weightPer}</span> lb
+                              </div>
+                            </div>
+
+                            {(() => {
+                              const amount = (item.worthAmount != null ? Number(item.worthAmount) : (item.worthGP != null ? Number(item.worthGP) : null));
+                              const unit = String(item.worthUnit || (item.worthGP != null ? 'gp' : 'gp')).toLowerCase();
+                              const worthAmount = amount != null && Number.isFinite(amount) ? amount : null;
+                              const worthUnit = ['cp','sp','gp','pp'].includes(unit) ? unit : 'gp';
+                              if (worthAmount == null || worthAmount <= 0) return null;
+
+                              return (
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-xs text-gray-300">
+                                    Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditModal({ type: 'confirmSellItem', itemId: item.id });
+                                    }}
+                                    className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
+                                    title="Sell one"
+                                  >
+                                    Sell
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       )}
-
-                      {/* Display Stat Bonuses (STR, DEX, AC, Speed, etc.) */}
-                      {item.hasAttrBonus && (() => {
-                        const bonuses = Array.isArray(item.attrBonuses) 
-                          ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
-                          : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
-                              ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
-                              : []);
-                        if (bonuses.length === 0) return null;
-                        return (
-                          <div className="text-xs text-gray-200 mb-3">
-                            <div className="text-gray-400">Stat Bonuses:</div>
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              {bonuses.map((b, idx) => (
-                                <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
-                                  {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      
-                      
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400">Qty</span>
-                            <button 
-                              onClick={() => {
-                                const nextInv = (char.inventory || [])
-                                  .map(i =>
-                                    i.id === item.id
-                                      ? { ...i, quantity: Math.max(0, i.quantity - 1) }
-                                      : i
-                                  )
-                                  .filter(i => (i.quantity || 0) > 0);
-
-                                const updated = nextInv.find(i => String(i.id) === String(item.id));
-                                let nextMagicItems = char.magicItems || [];
-                                if (updated) {
-                                  nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
-                                } else {
-                                  nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
-                                }
-
-                                updateChar({ inventory: nextInv, magicItems: nextMagicItems });
-                              }} 
-                              className="p-1 bg-red-600 rounded hover:bg-red-700"
-                            >
-                              <Minus size={14} />
-                            </button>
-                            <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
-                            <button 
-                              onClick={() => {
-                                const newInv = char.inventory.map(i =>
-                                  i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
-                                );
-                                const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
-                                const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
-                                updateChar({ inventory: newInv, magicItems: nextMagicItems });
-                              }} 
-                              className="p-1 bg-green-600 rounded hover:bg-green-700"
-                            >
-                              <Plus size={14} />
-                            </button>
-                          </div>
-
-                          <div className="text-sm text-gray-300">
-                            <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
-                            <span className="font-semibold text-white">{item.weightPer}</span> lb
-                            <span className="text-gray-500"> (Total: {totalWeight.toFixed(1)} lb)</span>
-                          </div>
-                        </div>
-
-                        {(() => {
-                          const amount = (item.worthAmount != null ? Number(item.worthAmount) : (item.worthGP != null ? Number(item.worthGP) : null));
-                          const unit = String(item.worthUnit || (item.worthGP != null ? 'gp' : 'gp')).toLowerCase();
-                          const worthAmount = amount != null && Number.isFinite(amount) ? amount : null;
-                          const worthUnit = ['cp','sp','gp','pp'].includes(unit) ? unit : 'gp';
-                          if (worthAmount == null || worthAmount <= 0) return null;
-
-                          return (
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="text-xs text-gray-300">
-                                Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditModal({ type: 'confirmSellItem', itemId: item.id });
-                                }}
-                                className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
-                                title="Sell one"
-                              >
-                                Sell
-                              </button>
-                            </div>
-                          );
-                        })()}
-                      </div>
-
-                      <div className="mt-2 text-sm text-gray-400">
-                        EV: {item.ev}
-                      </div>
                     </div>
                   );
                 }}
@@ -6902,6 +6940,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         if (totalGP !== 0) {
                           updateChar({ moneyGP: char.moneyGP + totalGP });
+                          showToast(`Added ${totalGP.toFixed(2)} GP`, 'success');
                         }
 
                         resetWalletForm();
@@ -6916,12 +6955,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
 
                         if (totalGP > char.moneyGP) {
-                          alert(`Insufficient funds! You need ${(totalGP - char.moneyGP).toFixed(2)} more GP.`);
+                          showToast(`Insufficient funds! Need ${(totalGP - char.moneyGP).toFixed(2)} more GP.`, 'error');
                           return;
                         }
 
                         if (totalGP !== 0) {
                           updateChar({ moneyGP: char.moneyGP - totalGP });
+                          showToast(`Spent ${totalGP.toFixed(2)} GP`, 'success');
                         }
 
                         resetWalletForm();
@@ -9048,6 +9088,20 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 {confirmModal.confirmText || 'Confirm'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-4 left-4 right-4 z-[70] flex justify-center pointer-events-none">
+          <div className={`px-4 py-3 rounded-lg shadow-lg max-w-sm text-center pointer-events-auto ${
+            toast.type === 'error' ? 'bg-red-600' :
+            toast.type === 'success' ? 'bg-green-600' :
+            toast.type === 'warning' ? 'bg-yellow-600' :
+            'bg-blue-600'
+          }`}>
+            {toast.message}
           </div>
         </div>
       )}
