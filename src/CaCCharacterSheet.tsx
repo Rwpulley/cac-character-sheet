@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Plus, Minus, Edit2, X, Trash2, Download, Upload } from 'lucide-react';
 
 // ===== LOCAL STORAGE PERSISTENCE =====
@@ -75,6 +75,171 @@ const importFromFile = (file) => {
 
 // ===== END LOCAL STORAGE PERSISTENCE =====
 
+// ===== UTILITY FUNCTIONS =====
+
+// Debounce hook for text inputs
+function useDebounce(value, delay = 300) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  
+  return debouncedValue;
+}
+
+// Debounced input component for text fields
+const DebouncedInput = React.memo(function DebouncedInput({ 
+  value, 
+  onChange, 
+  debounceMs = 300,
+  ...props 
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const timeoutRef = useRef(null);
+  
+  // Sync local value when external value changes
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+  
+  const handleChange = useCallback((e) => {
+    const newValue = e.target.value;
+    setLocalValue(newValue);
+    
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    
+    timeoutRef.current = setTimeout(() => {
+      onChange(newValue);
+    }, debounceMs);
+  }, [onChange, debounceMs]);
+  
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+  
+  return <input {...props} value={localValue} onChange={handleChange} />;
+});
+
+// Debounced textarea component
+const DebouncedTextarea = React.memo(function DebouncedTextarea({ 
+  value, 
+  onChange, 
+  debounceMs = 300,
+  ...props 
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const timeoutRef = useRef(null);
+  
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+  
+  const handleChange = useCallback((e) => {
+    const newValue = e.target.value;
+    setLocalValue(newValue);
+    
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    
+    timeoutRef.current = setTimeout(() => {
+      onChange(newValue);
+    }, debounceMs);
+  }, [onChange, debounceMs]);
+  
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+  
+  return <textarea {...props} value={localValue} onChange={handleChange} />;
+});
+
+// Virtualized list component for long lists (inventory, spells, etc.)
+const VirtualizedList = React.memo(function VirtualizedList({
+  items,
+  renderItem,
+  itemHeight = 120,
+  containerHeight = 500,
+  overscan = 3,
+  className = '',
+  emptyMessage = 'No items'
+}) {
+  const containerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  
+  const handleScroll = useCallback((e) => {
+    setScrollTop(e.target.scrollTop);
+  }, []);
+  
+  const { visibleItems, startIndex, totalHeight, offsetY } = useMemo(() => {
+    if (!items || items.length === 0) {
+      return { visibleItems: [], startIndex: 0, totalHeight: 0, offsetY: 0 };
+    }
+    
+    const totalHeight = items.length * itemHeight;
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+    const visibleCount = Math.ceil(containerHeight / itemHeight) + (overscan * 2);
+    const endIndex = Math.min(items.length, startIndex + visibleCount);
+    const visibleItems = items.slice(startIndex, endIndex);
+    const offsetY = startIndex * itemHeight;
+    
+    return { visibleItems, startIndex, totalHeight, offsetY };
+  }, [items, itemHeight, containerHeight, scrollTop, overscan]);
+  
+  if (!items || items.length === 0) {
+    return <div className="text-center text-gray-400 py-8">{emptyMessage}</div>;
+  }
+  
+  // For small lists, render normally without virtualization
+  if (items.length <= 15) {
+    return (
+      <div className={`space-y-3 ${className}`}>
+        {items.map((item, index) => (
+          <div key={item.id || index}>
+            {renderItem(item, index)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  
+  return (
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className={`overflow-y-auto ${className}`}
+      style={{ height: containerHeight, position: 'relative' }}
+    >
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ position: 'absolute', top: offsetY, left: 0, right: 0 }}>
+          <div className="space-y-3">
+            {visibleItems.map((item, index) => (
+              <div key={item.id || (startIndex + index)}>
+                {renderItem(item, startIndex + index)}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ===== END UTILITY FUNCTIONS =====
+
 const calcMod = (value) => {
   if (value <= 1) return -4;
   if (value <= 3) return -3;
@@ -104,7 +269,7 @@ function clamp(n, min, max) {
  * 1. Legacy mode: uses hidden input with id for document.getElementById access
  * 2. Controlled mode: uses value/onChange props like a standard React input
  */
-function DomStepper({
+const DomStepper = React.memo(function DomStepper({
   id,
   defaultValue = 0,
   value: controlledValue,
@@ -137,15 +302,15 @@ function DomStepper({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultValue, id, resetToken, isControlled]);
 
-  const dec = () => setVal((v) => clamp((Number(v) || 0) - step, min, max));
-  const inc = () => setVal((v) => clamp((Number(v) || 0) + step, min, max));
+  const dec = useCallback(() => setVal((v) => clamp((Number(v) || 0) - step, min, max)), [setVal, step, min, max]);
+  const inc = useCallback(() => setVal((v) => clamp((Number(v) || 0) + step, min, max)), [setVal, step, min, max]);
 
   return (
-    <div className={`flex items-center gap-2 w-full min-w-0 ${className}`}>
+    <div className={`flex items-center gap-1 ${className}`}>
       <button
         type="button"
         onClick={dec}
-        className="h-10 w-10 sm:h-12 sm:w-14 flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl sm:text-2xl font-bold leading-none active:bg-gray-500"
+        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500"
         aria-label="Decrease"
       >
         −
@@ -163,12 +328,12 @@ function DomStepper({
             const next = parseInt(cleaned, 10);
             setVal(Number.isFinite(next) ? next : 0);
           }}
-          className="min-w-[2.25rem] flex-1 text-center text-base sm:text-lg font-semibold bg-gray-800 rounded-lg h-10 sm:h-12 px-2"
+          className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 px-1"
         />
 
       ) : (
 
-        <div className="min-w-[2.25rem] flex-1 text-center text-base sm:text-lg font-semibold bg-gray-800 rounded-lg h-10 sm:h-12 flex items-center justify-center px-2">
+        <div className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 flex items-center justify-center px-1">
 
           {valuePrefix}{val}{valueSuffix}
 
@@ -179,7 +344,7 @@ function DomStepper({
       <button
         type="button"
         onClick={inc}
-        className="h-10 w-10 sm:h-12 sm:w-14 flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl sm:text-2xl font-bold leading-none active:bg-gray-500"
+        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500"
         aria-label="Increase"
       >
         +
@@ -189,7 +354,7 @@ function DomStepper({
       {id && <input type="number" id={id} value={val} readOnly className="hidden" />}
     </div>
   );
-}
+});
 
 const getUnarmedAttackName = (attacks) => {
   const count = (attacks || []).filter(a => (a?.name || '').startsWith('Unarmed Attack')).length;
@@ -451,6 +616,7 @@ export default function CaCCharacterSheet() {
   const [currentCharIndex, setCurrentCharIndex] = useState(null);
   const [activeTab, setActiveTab] = useState('main');
   const [editModal, setEditModal] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Notes tab editor
   const [noteEditor, setNoteEditor] = useState({
@@ -901,7 +1067,45 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     if (loaded && loaded.length > 0) {
       setCharacters(loaded);
     }
+    setIsLoading(false);
   }, []);
+
+  // ===== ANDROID BACK BUTTON HANDLER =====
+  useEffect(() => {
+    const handleBackButton = (e) => {
+      // If a modal is open, close it instead of navigating back
+      if (editModal) {
+        e.preventDefault();
+        setEditModal(null);
+        return;
+      }
+      // If viewing a character, go back to character list
+      if (currentCharIndex !== null) {
+        e.preventDefault();
+        setCurrentCharIndex(null);
+        return;
+      }
+    };
+
+    // Listen for popstate (browser/Android back button)
+    window.addEventListener('popstate', handleBackButton);
+    
+    // Push initial state so we have something to pop
+    if (window.history.state === null) {
+      window.history.pushState({ app: 'cac' }, '');
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handleBackButton);
+    };
+  }, [editModal, currentCharIndex]);
+
+  // Push history state when opening modals or selecting characters
+  useEffect(() => {
+    if (editModal || currentCharIndex !== null) {
+      window.history.pushState({ app: 'cac', modal: !!editModal, char: currentCharIndex }, '');
+    }
+  }, [editModal, currentCharIndex]);
 
   // ===== AUTO-SAVE WHEN CHARACTERS CHANGE =====
   useEffect(() => {
@@ -955,6 +1159,29 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     };
     input.click();
   }, []);
+
+  // ===== MEMOIZED MODAL HANDLERS =====
+  // These prevent creating new function references on every render
+  const openNameModal = useCallback(() => setEditModal({ type: 'name' }), []);
+  const openRaceModal = useCallback(() => setEditModal({ type: 'race' }), []);
+  const openClassModal = useCallback(() => setEditModal({ type: 'class' }), []);
+  const openSpeedModal = useCallback(() => setEditModal({ type: 'speed' }), []);
+  const openHpModal = useCallback(() => setEditModal({ type: 'hp' }), []);
+  const openHpTrackingModal = useCallback(() => setEditModal({ type: 'hpTracking' }), []);
+  const openAcTrackingModal = useCallback(() => setEditModal({ type: 'acTracking' }), []);
+  const openXpTableModal = useCallback(() => setEditModal({ type: 'xpTable' }), []);
+  const openAddXpModal = useCallback(() => setEditModal({ type: 'addXp' }), []);
+  const openWalletModal = useCallback(() => setEditModal({ type: 'wallet' }), []);
+  const openNewItemModal = useCallback(() => setEditModal({ type: 'newItem' }), []);
+  const openNewAttackModal = useCallback(() => setEditModal({ type: 'newAttack' }), []);
+  const openNewSpellModal = useCallback(() => setEditModal({ type: 'newSpell' }), []);
+  const openNewCompanionModal = useCallback(() => setEditModal({ type: 'newCompanion' }), []);
+  const openSpellStatsModal = useCallback(() => setEditModal({ type: 'spellStats' }), []);
+  const openSpellSlotsModal = useCallback(() => setEditModal({ type: 'spellSlots' }), []);
+  const openNewMagicItemModal = useCallback(() => setEditModal({ type: 'newMagicItem' }), []);
+  const openBonusModifiersModal = useCallback(() => setEditModal({ type: 'bonusModifiers' }), []);
+  const openSaveModifiersModal = useCallback(() => setEditModal({ type: 'saveModifiers' }), []);
+  const closeModal = useCallback(() => setEditModal(null), []);
 
   
   const char = currentCharIndex !== null ? characters[currentCharIndex] : null;
@@ -2087,6 +2314,18 @@ if (editModal.type === 'acTracking' && char) {
   };
 
   if (currentCharIndex === null) {
+    // Show loading screen
+    if (isLoading) {
+      return (
+        <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-4xl font-bold mb-4">Castles & Crusades</div>
+            <div className="text-gray-400">Loading...</div>
+          </div>
+        </div>
+      );
+    }
+    
     return (<>
       <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
         <div className="max-w-2xl mx-auto bg-gray-800 rounded-lg p-8">
@@ -2163,7 +2402,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Delete Character</h2>
               <button
-                onClick={() => setEditModal(null)}
+                onClick={closeModal}
                 className="p-2 bg-gray-700 rounded hover:bg-gray-600"
                 aria-label="Close"
               >
@@ -2181,7 +2420,7 @@ if (editModal.type === 'acTracking' && char) {
 
             <div className="flex justify-end gap-2 pt-6">
               <button
-                onClick={() => setEditModal(null)}
+                onClick={closeModal}
                 className="px-4 py-2 text-base bg-gray-700 rounded hover:bg-gray-600"
               >
                 Cancel
@@ -2246,7 +2485,7 @@ if (editModal.type === 'acTracking' && char) {
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <h1 className="text-3xl font-bold">{char.name}</h1>
-              <button onClick={() => setEditModal({ type: 'name' })} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
+              <button onClick={openNameModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
                 <Edit2 size={16} />
               </button>
             </div>
@@ -2256,7 +2495,7 @@ if (editModal.type === 'acTracking' && char) {
                 <label className="block text-sm text-gray-400">Race</label>
                 <div className="flex items-center gap-2">
                   <span className="text-lg">{char.race || "Not set"}</span>
-                  <button onClick={() => setEditModal({ type: 'race' })} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
+                  <button onClick={openRaceModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
                     <Edit2 size={14} />
                   </button>
                 </div>
@@ -2269,7 +2508,7 @@ if (editModal.type === 'acTracking' && char) {
                     {char.class2 && <div>{char.class2} {char.class2Level}</div>}
                     {canLevelUp && <span className="text-green-400 ml-2">⬆ LEVEL UP!</span>}
                   </div>
-                  <button onClick={() => setEditModal({ type: 'class' })} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
+                  <button onClick={openClassModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
                     <Edit2 size={14} />
                   </button>
                 </div>
@@ -2278,7 +2517,7 @@ if (editModal.type === 'acTracking' && char) {
                 <label className="block text-sm text-gray-400">Speed</label>
                 <div className="flex items-center gap-2">
                   <span className="text-lg">{getSpeedTotal()} ft</span>
-                  <button onClick={() => setEditModal({ type: 'speed' })} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
+                  <button onClick={openSpeedModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
                     <Edit2 size={14} />
                   </button>
                 </div>
@@ -2298,7 +2537,7 @@ if (editModal.type === 'acTracking' && char) {
                   </button>
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setEditModal({ type: 'hp' })} className="flex-1 px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500">
+                  <button onClick={openHpModal} className="flex-1 px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500">
                     Edit HP
                   </button>
                   <button onClick={() => {
@@ -2331,7 +2570,7 @@ if (editModal.type === 'acTracking' && char) {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xl font-bold">{calculateAC()}</span>
                 </div>
-                <button onClick={() => setEditModal({ type: 'acTracking' })} className="w-full px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500">
+                <button onClick={openAcTrackingModal} className="w-full px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500">
                   AC Tracking
                 </button>
               </div>
@@ -2341,10 +2580,10 @@ if (editModal.type === 'acTracking' && char) {
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm text-gray-400">Experience</label>
                 <div className="flex gap-2">
-                  <button onClick={() => setEditModal({ type: 'xpTable' })} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
+                  <button onClick={openXpTableModal} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
                     Level XP
                   </button>
-                  <button onClick={() => setEditModal({ type: 'addXp' })} className="px-4 py-2 text-base bg-blue-600 rounded text-sm hover:bg-blue-700">
+                  <button onClick={openAddXpModal} className="px-4 py-2 text-base bg-blue-600 rounded text-sm hover:bg-blue-700">
                     Add XP
                   </button>
                 </div>
@@ -2507,10 +2746,10 @@ if (editModal.type === 'acTracking' && char) {
   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
     <div>
       <label className="block text-sm text-gray-400 mb-1">Alignment</label>
-      <input
+      <DebouncedInput
         type="text"
         value={char.alignment || ''}
-        onChange={(e) => updateChar({ alignment: e.target.value })}
+        onChange={(value) => updateChar({ alignment: value })}
         className="w-full p-2 bg-gray-700 rounded text-white"
         placeholder="e.g., Lawful Good"
       />
@@ -2518,10 +2757,10 @@ if (editModal.type === 'acTracking' && char) {
 
     <div>
       <label className="block text-sm text-gray-400 mb-1">Languages</label>
-      <input
+      <DebouncedInput
         type="text"
         value={char.languages || ''}
-        onChange={(e) => updateChar({ languages: e.target.value })}
+        onChange={(value) => updateChar({ languages: value })}
         className="w-full p-2 bg-gray-700 rounded text-white"
         placeholder="e.g., Common, Elvish"
       />
@@ -2529,10 +2768,10 @@ if (editModal.type === 'acTracking' && char) {
 
     <div>
       <label className="block text-sm text-gray-400 mb-1">Deity</label>
-      <input
+      <DebouncedInput
         type="text"
         value={char.deity || ''}
-        onChange={(e) => updateChar({ deity: e.target.value })}
+        onChange={(value) => updateChar({ deity: value })}
         className="w-full p-2 bg-gray-700 rounded text-white"
         placeholder="e.g., Odin"
       />
@@ -2540,10 +2779,10 @@ if (editModal.type === 'acTracking' && char) {
 
     <div>
       <label className="block text-sm text-gray-400 mb-1">Holy Symbol</label>
-      <input
+      <DebouncedInput
         type="text"
         value={char.holySymbol || ''}
-        onChange={(e) => updateChar({ holySymbol: e.target.value })}
+        onChange={(value) => updateChar({ holySymbol: value })}
         className="w-full p-2 bg-gray-700 rounded text-white"
         placeholder="e.g., Silver hammer"
       />
@@ -2574,7 +2813,7 @@ if (editModal.type === 'acTracking' && char) {
                 <button onClick={() => setEditModal({ type: 'bthBase' })} className="px-3 py-2 bg-purple-600 rounded hover:bg-purple-700 text-sm">
                   BTH
                 </button>
-                <button onClick={() => setEditModal({ type: 'bonusModifiers' })} className="px-3 py-2 bg-purple-600 rounded hover:bg-purple-700 text-sm">
+                <button onClick={openBonusModifiersModal} className="px-3 py-2 bg-purple-600 rounded hover:bg-purple-700 text-sm">
                   Bonus Modifiers
                 </button>
               </div>
@@ -2592,7 +2831,12 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No attacks added yet</div>
             )}
 
-            {sortedAttacks.map(attack => {
+            {char.attacks.length > 0 && (
+              <div 
+                className="space-y-4 overflow-y-auto pr-2" 
+                style={{ maxHeight: 'calc(100vh - 250px)' }}
+              >
+                {sortedAttacks.map(attack => {
               const weaponItem = (char.inventory || []).find((it) => String(it.id) === String(attack.weaponId || ''));
 
               const modeResolved = (attack.weaponMode || attack.weaponType || weaponItem?.weaponType || 'melee');
@@ -2825,6 +3069,8 @@ if (editModal.type === 'acTracking' && char) {
                 </div>
               );
             })}
+              </div>
+            )}
           </div>
         )}
 
@@ -2951,7 +3197,7 @@ if (editModal.type === 'acTracking' && char) {
                 <label className="block text-sm text-gray-400 mb-1">Spell Save DC</label>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl font-bold">{char.spellSaveDC}</span>
-                  <button onClick={() => setEditModal({ type: 'spellStats' })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
+                  <button onClick={openSpellStatsModal} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
                     <Edit2 size={14} />
                   </button>
                 </div>
@@ -2960,7 +3206,7 @@ if (editModal.type === 'acTracking' && char) {
                 <label className="block text-sm text-gray-400 mb-1">Spell Attack Bonus</label>
                 <div className="flex items-center gap-2">
                   <span className="text-2xl font-bold">+{char.spellAttackBonus}</span>
-                  <button onClick={() => setEditModal({ type: 'spellStats' })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
+                  <button onClick={openSpellStatsModal} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
                     <Edit2 size={14} />
                   </button>
                 </div>
@@ -2970,7 +3216,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="bg-gray-700 p-4 rounded-lg">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xl font-bold">Spell Slots per Level</h3>
-                <button onClick={() => setEditModal({ type: 'spellSlots' })} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                <button onClick={openSpellSlotsModal} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
                   Edit Slots
                 </button>
               </div>
@@ -4116,7 +4362,7 @@ if (editModal.type === 'acTracking' && char) {
                 <button onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); }} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
                   ← Back to Magic
                 </button>
-                <button onClick={() => setEditModal({ type: 'newSpell' })} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
+                <button onClick={openNewSpellModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
                   + Add Spell
                 </button>
               </div>
@@ -4126,94 +4372,101 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No spells learned yet</div>
             )}
 
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => {
-              const spellsAtLevel = char.spellsLearned.filter(s => s.level === level).slice().sort(sortSpellsLevelName);
-              if (spellsAtLevel.length === 0) return null;
-              
-              return (
-                <div key={level} className="bg-gray-700 p-4 rounded-lg">
-                  <h3 className="font-bold text-xl mb-3 text-blue-400">Level {level}</h3>
-                  <div className="space-y-3">
-                    {spellsAtLevel.map(spell => {
-                      const preparedCount = char.spellsPrepared.filter(s => s.id === spell.id).length;
-                      const canPrepare = preparedCount < char.spellSlots[level];
-                      
-                      return (
-                        <div key={spell.id} className="bg-gray-800 p-3 rounded">
-                          <div className="flex items-start gap-3">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <div className="font-bold text-lg">{spell.name}</div>
-                                <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
-                                  <Edit2 size={12} />
-                                </button>
-                              </div>
-                              <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
-                              
-                              <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                                <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
-                                <div><span className="text-gray-400">Range:</span> {spell.range}</div>
-                                <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
-                                <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
-                                <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
-                                {spell.hasDiceRoll && (
-                                  <div><span className="text-gray-400">Dice:</span> {spell.diceType}</div>
-                                )}
-                              </div>
-                              
-                              <div className="text-sm mb-1">
-                                <span className="text-gray-400">Components:</span> 
-                                {spell.verbal && ' V'}
-                                {spell.somatic && ' S'}
-                                {spell.material && ` M (${spell.materialDesc})`}
-                              </div>
-                              
-                              {spell.spellResistance && (
-                                <div className="text-xs text-yellow-400">Spell Resistance: Yes</div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-1 items-center">
-                              <button
-                                onClick={() => {
-                                  if (canPrepare) {
-                                    updateChar({ 
-                                      spellsPrepared: [...char.spellsPrepared, { ...spell, prepId: Date.now(), concentrating: false, numDice: 1 }] 
-                                    });
-                                  }
-                                }}
-                                disabled={!canPrepare}
-                                className={`px-3 py-1 rounded text-sm ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
-                              >
-                                <Plus size={16} />
-                              </button>
-                              {preparedCount > 0 && (
-                                <>
+            {char.spellsLearned.length > 0 && (
+              <div 
+                className="space-y-4 overflow-y-auto pr-2" 
+                style={{ maxHeight: 'calc(100vh - 200px)' }}
+              >
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => {
+                  const spellsAtLevel = char.spellsLearned.filter(s => s.level === level).slice().sort(sortSpellsLevelName);
+                  if (spellsAtLevel.length === 0) return null;
+                  
+                  return (
+                    <div key={level} className="bg-gray-700 p-4 rounded-lg">
+                      <h3 className="font-bold text-xl mb-3 text-blue-400">Level {level}</h3>
+                      <div className="space-y-3">
+                        {spellsAtLevel.map(spell => {
+                          const preparedCount = char.spellsPrepared.filter(s => s.id === spell.id).length;
+                          const canPrepare = preparedCount < char.spellSlots[level];
+                          
+                          return (
+                            <div key={spell.id} className="bg-gray-800 p-3 rounded">
+                              <div className="flex items-start gap-3">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <div className="font-bold text-lg">{spell.name}</div>
+                                    <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
+                                      <Edit2 size={12} />
+                                    </button>
+                                  </div>
+                                  <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                                  
+                                  <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                                    <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
+                                    <div><span className="text-gray-400">Range:</span> {spell.range}</div>
+                                    <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
+                                    <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
+                                    <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
+                                    {spell.hasDiceRoll && (
+                                      <div><span className="text-gray-400">Dice:</span> {spell.diceType}</div>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="text-sm mb-1">
+                                    <span className="text-gray-400">Components:</span> 
+                                    {spell.verbal && ' V'}
+                                    {spell.somatic && ' S'}
+                                    {spell.material && ` M (${spell.materialDesc})`}
+                                  </div>
+                                  
+                                  {spell.spellResistance && (
+                                    <div className="text-xs text-yellow-400">Spell Resistance: Yes</div>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-1 items-center">
                                   <button
                                     onClick={() => {
-                                      const preparedSpells = char.spellsPrepared.filter(s => s.id === spell.id);
-                                      if (preparedSpells.length > 0) {
-                                        const toRemove = preparedSpells[0];
+                                      if (canPrepare) {
                                         updateChar({ 
-                                          spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== toRemove.prepId)
+                                          spellsPrepared: [...char.spellsPrepared, { ...spell, prepId: Date.now(), concentrating: false, numDice: 1 }] 
                                         });
                                       }
                                     }}
-                                    className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 text-sm"
+                                    disabled={!canPrepare}
+                                    className={`px-3 py-1 rounded text-sm ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
                                   >
-                                    <Minus size={16} />
+                                    <Plus size={16} />
                                   </button>
-                                  <div className="text-sm font-bold text-gray-400">{preparedCount}</div>
-                                </>
-                              )}
+                                  {preparedCount > 0 && (
+                                    <>
+                                      <button
+                                        onClick={() => {
+                                          const preparedSpells = char.spellsPrepared.filter(s => s.id === spell.id);
+                                          if (preparedSpells.length > 0) {
+                                            const toRemove = preparedSpells[0];
+                                            updateChar({ 
+                                              spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== toRemove.prepId)
+                                            });
+                                          }
+                                        }}
+                                        className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 text-sm"
+                                      >
+                                        <Minus size={16} />
+                                      </button>
+                                      <div className="text-sm font-bold text-gray-400">{preparedCount}</div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -4280,37 +4533,44 @@ if (editModal.type === 'acTracking' && char) {
               </div>
             ) : (
               <div
-                className="space-y-3 max-h-[70vh] overflow-y-auto pr-6"
+                className="space-y-3 max-h-[70vh] overflow-y-auto pr-2"
                 style={{ scrollbarGutter: 'stable' }}
               >
                 {getNotes().map((n) => (
                   <div key={n.id} className="bg-gray-700 p-4 rounded-lg">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-bold text-lg break-words">{n.title || '(Untitled)'}</div>
-                        {n.description ? (
-                          <div className="text-sm text-gray-200 mt-2 whitespace-pre-wrap break-words">{n.description}</div>
-                        ) : (
-                          <div className="text-sm text-gray-400 mt-2">(No description)</div>
-                        )}
-                      </div>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="font-bold text-lg break-words min-w-0 flex-1">{n.title || '(Untitled)'}</div>
                       <div className="flex gap-2 flex-shrink-0">
                         <button
                           onClick={() => openEditNote(n)}
-                          className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 font-semibold text-sm"
+                          className="p-2.5 bg-gray-600 rounded hover:bg-gray-500 active:bg-gray-400"
+                          aria-label="Edit note"
                         >
-                          Edit
+                          <Edit2 size={18} />
                         </button>
                         <button
                           onClick={() => {
                             if (confirm('Delete this note?')) deleteNote(n.id);
                           }}
-                          className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 font-semibold text-sm"
+                          className="p-2.5 bg-red-600 rounded hover:bg-red-700 active:bg-red-500"
+                          aria-label="Delete note"
                         >
-                          Delete
+                          <Trash2 size={18} />
                         </button>
                       </div>
                     </div>
+                    <div className="text-xs text-gray-400 mb-2">
+                      {n.updatedAt && n.updatedAt !== n.createdAt 
+                        ? `Updated ${new Date(n.updatedAt).toLocaleDateString()} ${new Date(n.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                        : n.createdAt 
+                          ? `Created ${new Date(n.createdAt).toLocaleDateString()} ${new Date(n.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                          : ''}
+                    </div>
+                    {n.description ? (
+                      <div className="text-sm text-gray-200 whitespace-pre-wrap break-words">{n.description}</div>
+                    ) : (
+                      <div className="text-sm text-gray-400">(No description)</div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -4467,7 +4727,7 @@ if (editModal.type === 'acTracking' && char) {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Companions</h2>
-              <button onClick={() => setEditModal({ type: 'newCompanion' })} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
+              <button onClick={openNewCompanionModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
                 + Add Companion
               </button>
             </div>
@@ -4728,7 +4988,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="bg-gray-700 p-4 rounded">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xl font-bold">Wallet</h3>
-                <button onClick={() => setEditModal({ type: 'wallet' })} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                <button onClick={openWalletModal} className="px-4 py-2 text-base bg-blue-600 rounded hover:bg-blue-700 text-sm">
                   Use Wallet
                 </button>
               </div>
@@ -4744,7 +5004,7 @@ if (editModal.type === 'acTracking' && char) {
                 >
                   Info
                 </button>
-                <button onClick={() => setEditModal({ type: 'newItem' })} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
+                <button onClick={openNewItemModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
                   + Add Item
                 </button>
               </div>
@@ -4753,166 +5013,167 @@ if (editModal.type === 'acTracking' && char) {
             {char.inventory.length === 0 && (
               <div className="text-center text-gray-400 py-8">No items yet</div>
             )}
-            {sortedInventory.map(item => {
-              const totalWeight = item.weightPer * item.quantity;
-              return (
-                <div key={item.id} className="bg-gray-700 p-4 rounded">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-bold text-lg">{item.name}</div>
-                    <button onClick={() => setEditModal({ type: 'editItem', item })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
-                      <Edit2 size={16} />
-                    </button>
-                  </div>
-                  <div className="text-sm text-gray-300 mb-3">{item.description}</div>
-                  {normalizeItemEffects(item).length > 0 && (
-                    <div className="text-xs text-gray-200 mb-3">
-                      <div className="text-gray-400">Effects:</div>
-                      <div className="mt-1 space-y-1">
-                        {normalizeItemEffects(item).map((e) => (
-                          <div key={e.id || `${item.id}-${e.kind}-${e.appliesTo}-${e.targetId || ''}`}>
-                            {e.kind === 'attack' && (
-                              <span>
-                                Attack: {e.appliesTo === 'unarmed' ? 'Unarmed' : 'Weapon'}
-                                {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
-                                {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
-                                {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
-                                {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
-                                {e.appliesTo === 'weapon' && e.targetId ? (() => {
-                                  const w = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                  return w ? ` (${w.name})` : '';
-                                })() : ''}
-                              </span>
-                            )}
-                            {e.kind === 'ac' && (
-                              <span>
-                                AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0} ({e.appliesTo || 'ac'})
-                                {e.targetId ? (() => {
-                                  const t = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                  return t ? ` (${t.name})` : '';
-                                })() : ''}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Display Stat Bonuses (STR, DEX, AC, Speed, etc.) */}
-                  {item.hasAttrBonus && (() => {
-                    const bonuses = Array.isArray(item.attrBonuses) 
-                      ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
-                      : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
-                          ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
-                          : []);
-                    if (bonuses.length === 0) return null;
-                    return (
-                      <div className="text-xs text-gray-200 mb-3">
-                        <div className="text-gray-400">Stat Bonuses:</div>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          {bonuses.map((b, idx) => (
-                            <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
-                              {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  
-                  
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">Qty</span>
-                        <button 
-                          onClick={() => {
-                            const nextInv = (char.inventory || [])
-                              .map(i =>
-                                i.id === item.id
-                                  ? { ...i, quantity: Math.max(0, i.quantity - 1) }
-                                  : i
-                              )
-                              .filter(i => (i.quantity || 0) > 0);
-
-                            const updated = nextInv.find(i => String(i.id) === String(item.id));
-                            let nextMagicItems = char.magicItems || [];
-                            if (updated) {
-                              nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
-                            } else {
-                              nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
-                            }
-
-                            updateChar({ inventory: nextInv, magicItems: nextMagicItems });
-                          }} 
-                          className="p-1 bg-red-600 rounded hover:bg-red-700"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
-                        <button 
-                          onClick={() => {
-                            const newInv = char.inventory.map(i =>
-                              i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
-                            );
-                            const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
-                            const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
-                            updateChar({ inventory: newInv, magicItems: nextMagicItems });
-                          }} 
-                          className="p-1 bg-green-600 rounded hover:bg-green-700"
-                        >
-                          <Plus size={14} />
+            {char.inventory.length > 0 && (
+              <VirtualizedList
+                items={sortedInventory}
+                itemHeight={180}
+                containerHeight={Math.min(600, window.innerHeight - 300)}
+                emptyMessage="No items yet"
+                renderItem={(item) => {
+                  const totalWeight = item.weightPer * item.quantity;
+                  return (
+                    <div className="bg-gray-700 p-4 rounded">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-bold text-lg">{item.name}</div>
+                        <button onClick={() => setEditModal({ type: 'editItem', item })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
+                          <Edit2 size={16} />
                         </button>
                       </div>
+                      <div className="text-sm text-gray-300 mb-3">{item.description}</div>
+                      {normalizeItemEffects(item).length > 0 && (
+                        <div className="text-xs text-gray-200 mb-3">
+                          <div className="text-gray-400">Effects:</div>
+                          <div className="mt-1 space-y-1">
+                            {normalizeItemEffects(item).map((e) => (
+                              <div key={e.id || `${item.id}-${e.kind}-${e.appliesTo}-${e.targetId || ''}`}>
+                                {e.kind === 'attack' && (
+                                  <span>
+                                    Attack: {e.appliesTo === 'unarmed' ? 'Unarmed' : 'Weapon'}
+                                    {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
+                                    {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
+                                    {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
+                                    {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
+                                    {e.appliesTo === 'weapon' && e.targetId ? (() => {
+                                      const w = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
+                                      return w ? ` (${w.name})` : '';
+                                    })() : ''}
+                                  </span>
+                                )}
+                                {e.kind === 'ac' && (
+                                  <span>
+                                    AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0} ({e.appliesTo || 'ac'})
+                                    {e.targetId ? (() => {
+                                      const t = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
+                                      return t ? ` (${t.name})` : '';
+                                    })() : ''}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                      <div className="text-sm text-gray-300">
-                        <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
-                        <span className="font-semibold text-white">{item.weightPer}</span> lb
-                        <span className="text-gray-500"> (Total: {totalWeight.toFixed(1)} lb)</span>
+                      {/* Display Stat Bonuses (STR, DEX, AC, Speed, etc.) */}
+                      {item.hasAttrBonus && (() => {
+                        const bonuses = Array.isArray(item.attrBonuses) 
+                          ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
+                          : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
+                              ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
+                              : []);
+                        if (bonuses.length === 0) return null;
+                        return (
+                          <div className="text-xs text-gray-200 mb-3">
+                            <div className="text-gray-400">Stat Bonuses:</div>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {bonuses.map((b, idx) => (
+                                <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
+                                  {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      
+                      
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400">Qty</span>
+                            <button 
+                              onClick={() => {
+                                const nextInv = (char.inventory || [])
+                                  .map(i =>
+                                    i.id === item.id
+                                      ? { ...i, quantity: Math.max(0, i.quantity - 1) }
+                                      : i
+                                  )
+                                  .filter(i => (i.quantity || 0) > 0);
+
+                                const updated = nextInv.find(i => String(i.id) === String(item.id));
+                                let nextMagicItems = char.magicItems || [];
+                                if (updated) {
+                                  nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
+                                } else {
+                                  nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
+                                }
+
+                                updateChar({ inventory: nextInv, magicItems: nextMagicItems });
+                              }} 
+                              className="p-1 bg-red-600 rounded hover:bg-red-700"
+                            >
+                              <Minus size={14} />
+                            </button>
+                            <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
+                            <button 
+                              onClick={() => {
+                                const newInv = char.inventory.map(i =>
+                                  i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+                                );
+                                const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
+                                const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
+                                updateChar({ inventory: newInv, magicItems: nextMagicItems });
+                              }} 
+                              className="p-1 bg-green-600 rounded hover:bg-green-700"
+                            >
+                              <Plus size={14} />
+                            </button>
+                          </div>
+
+                          <div className="text-sm text-gray-300">
+                            <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
+                            <span className="font-semibold text-white">{item.weightPer}</span> lb
+                            <span className="text-gray-500"> (Total: {totalWeight.toFixed(1)} lb)</span>
+                          </div>
+                        </div>
+
+                        {(() => {
+                          const amount = (item.worthAmount != null ? Number(item.worthAmount) : (item.worthGP != null ? Number(item.worthGP) : null));
+                          const unit = String(item.worthUnit || (item.worthGP != null ? 'gp' : 'gp')).toLowerCase();
+                          const worthAmount = amount != null && Number.isFinite(amount) ? amount : null;
+                          const worthUnit = ['cp','sp','gp','pp'].includes(unit) ? unit : 'gp';
+                          if (worthAmount == null || worthAmount <= 0) return null;
+
+                          return (
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs text-gray-300">
+                                Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditModal({ type: 'confirmSellItem', itemId: item.id });
+                                }}
+                                className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
+                                title="Sell one"
+                              >
+                                Sell
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      <div className="mt-2 text-sm text-gray-400">
+                        EV: {item.ev}
                       </div>
                     </div>
-
-                    {(() => {
-                      const amount = (item.worthAmount != null ? Number(item.worthAmount) : (item.worthGP != null ? Number(item.worthGP) : null));
-                      const unit = String(item.worthUnit || (item.worthGP != null ? 'gp' : 'gp')).toLowerCase();
-                      const worthAmount = amount != null && Number.isFinite(amount) ? amount : null;
-                      const worthUnit = ['cp','sp','gp','pp'].includes(unit) ? unit : 'gp';
-                      if (worthAmount == null || worthAmount <= 0) return null;
-
-                      const toGP = (amt, u) => {
-                        if (u === 'cp') return amt / 100;
-                        if (u === 'sp') return amt / 10;
-                        if (u === 'pp') return amt * 10;
-                        return amt; // gp
-                      };
-
-                      return (
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs text-gray-300">
-                            Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditModal({ type: 'confirmSellItem', itemId: item.id });
-                            }}
-                            className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
-                            title="Sell one"
-                          >
-                            Sell
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="mt-2 text-sm text-gray-400">
-                    EV: {item.ev}
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                }}
+              />
+            )}
             
             <div className="bg-gray-800 p-4 rounded">
               <div className="flex items-start justify-between gap-3">
@@ -5071,9 +5332,9 @@ if (editModal.type === 'acTracking' && char) {
       )}
 
 {editModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4 z-50">
           <div
-            className={`bg-gray-800 rounded-lg p-6 pr-10 w-full max-h-screen overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
+            className={`bg-gray-800 rounded-lg p-4 sm:p-6 sm:pr-10 w-full max-h-screen overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
             // Helps prevent the scrollbar from overlapping right-edge text on supported browsers.
             style={{ scrollbarGutter: 'stable' }}
           >
@@ -5120,7 +5381,7 @@ if (editModal.type === 'acTracking' && char) {
                 {editModal.type === 'raceAbilities' && 'Edit Race Abilities'}
                 {editModal.type === 'advantages' && 'Edit Advantages'}
               </h3>
-              <button onClick={() => setEditModal(null)} className="text-gray-400 hover:text-white">
+              <button onClick={closeModal} className="text-gray-400 hover:text-white">
                 <X size={24} />
               </button>
             </div>
@@ -5568,7 +5829,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     {editModal.message}
                   </div>
                   <button
-                    onClick={() => setEditModal(null)}
+                    onClick={closeModal}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
                   >
                     OK
@@ -6517,7 +6778,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                  <div className="grid grid-cols-2 gap-2 mt-4">
                     <button
                       onClick={() => {
                         const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
@@ -6555,7 +6816,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
 
                   <button
-                    onClick={() => setEditModal(null)}
+                    onClick={closeModal}
                     className="w-full py-2 bg-gray-600 rounded hover:bg-gray-500 mt-3"
                   >
                     Close
@@ -7291,7 +7552,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => setEditModal(null)}
+                    onClick={closeModal}
                     className="px-4 py-2 text-base bg-gray-700 rounded hover:bg-gray-600"
                   >
                     Cancel
@@ -7318,7 +7579,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <p className="text-sm text-gray-200">Are you sure you want to delete this magic item? This cannot be undone.</p>
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => setEditModal(null)}
+                    onClick={closeModal}
                     className="px-4 py-2 text-base bg-gray-700 rounded hover:bg-gray-600"
                   >
                     Cancel
@@ -7349,7 +7610,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 </p>
                 <div className="flex justify-end gap-2 pt-2">
                   <button
-                    onClick={() => setEditModal(null)}
+                    onClick={closeModal}
                     className="px-4 py-2 text-base bg-gray-700 rounded hover:bg-gray-600"
                   >
                     Cancel
@@ -7391,7 +7652,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <div className="flex items-center justify-between mb-4">
                         <h2 className="text-xl font-bold">Sell Item</h2>
                         <button
-                          onClick={() => setEditModal(null)}
+                          onClick={closeModal}
                           className="p-2 bg-gray-700 rounded hover:bg-gray-600"
                           aria-label="Close"
                         >
@@ -7407,7 +7668,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                       <div className="flex justify-end gap-2 pt-4">
                         <button
-                          onClick={() => setEditModal(null)}
+                          onClick={closeModal}
                           className="px-4 py-2 text-base bg-gray-700 rounded hover:bg-gray-600"
                         >
                           Cancel
@@ -7707,7 +7968,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </select>
 
                   <button
-                    onClick={() => setEditModal({ type: 'newSpell' })}
+                    onClick={openNewSpellModal}
                     className="w-full py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
                   >
                     + Add New Spell to Spells Learned
@@ -7754,7 +8015,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       Add Spell
                     </button>
                     <button
-                      onClick={() => setEditModal(null)}
+                      onClick={closeModal}
                       className="flex-1 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
                     >
                       Cancel
@@ -7996,7 +8257,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             Save
                           </button>
                           <button
-                            onClick={() => setEditModal(null)}
+                            onClick={closeModal}
                             className="flex-1 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
                           >
                             Cancel
