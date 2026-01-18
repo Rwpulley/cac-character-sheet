@@ -2831,12 +2831,7 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No attacks added yet</div>
             )}
 
-            {char.attacks.length > 0 && (
-              <div 
-                className="space-y-4 overflow-y-auto pr-2" 
-                style={{ maxHeight: 'calc(100vh - 250px)' }}
-              >
-                {sortedAttacks.map(attack => {
+            {sortedAttacks.map(attack => {
               const weaponItem = (char.inventory || []).find((it) => String(it.id) === String(attack.weaponId || ''));
 
               const modeResolved = (attack.weaponMode || attack.weaponType || weaponItem?.weaponType || 'melee');
@@ -3069,8 +3064,6 @@ if (editModal.type === 'acTracking' && char) {
                 </div>
               );
             })}
-              </div>
-            )}
           </div>
         )}
 
@@ -6847,19 +6840,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Quantity</label>
                       <input
-                        type="number"
-                        value={itemForm.quantity}
-                        onChange={(e) => updateItemForm({ quantity: parseInt(e.target.value) || 1 })}
+                        type="text"
+                        inputMode="numeric"
+                        value={itemForm.quantity === 1 ? '' : itemForm.quantity}
+                        onChange={(e) => updateItemForm({ quantity: e.target.value === '' ? 1 : (parseInt(e.target.value) || 1) })}
+                        placeholder="1"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Weight Per Item (lb)</label>
                       <input
-                        type="number"
-                        step="0.1"
-                        value={itemForm.weightPer}
-                        onChange={(e) => updateItemForm({ weightPer: parseFloat(e.target.value) || 0 })}
+                        type="text"
+                        inputMode="decimal"
+                        value={itemForm.weightPer === 0 ? '' : itemForm.weightPer}
+                        onChange={(e) => updateItemForm({ weightPer: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0) })}
+                        placeholder="0"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
                     </div>
@@ -6870,12 +6866,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <label className="block text-sm text-gray-400 mb-1">Worth</label>
                     <div className="flex gap-2">
                       <input
-                        type="number"
-                        step="0.01"
-                        value={itemForm.worth}
-                        onChange={(e) => updateItemForm({ worth: parseFloat(e.target.value) || 0 })}
+                        type="text"
+                        inputMode="decimal"
+                        value={itemForm.worth === 0 ? '' : itemForm.worth}
+                        onChange={(e) => updateItemForm({ worth: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0) })}
                         className="flex-1 p-2 bg-gray-700 rounded text-white"
-                        placeholder=""
+                        placeholder="0"
                       />
                       <select
                         value={itemForm.worthUnit}
@@ -6892,10 +6888,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   <label className="block text-sm text-gray-400 mb-1">Encumbrance Value (EV)</label>
                   <input
-                    type="number"
-                    step="0.1"
-                    value={itemForm.ev}
-                    onChange={(e) => updateItemForm({ ev: parseFloat(e.target.value) || 0 })}
+                    type="text"
+                    inputMode="decimal"
+                    value={itemForm.ev === 0 ? '' : itemForm.ev}
+                    onChange={(e) => updateItemForm({ ev: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0) })}
+                    placeholder="0"
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
                   />
 
@@ -8704,10 +8701,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <div>
                           <label className="block text-sm text-gray-400 mb-1">Number of Dice</label>
                           <input
-                            type="number"
-                            min={1}
-                            value={attackForm.numDice}
-                            onChange={(e) => updateAttackForm({ numDice: e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1) })}
+                            type="text"
+                            inputMode="numeric"
+                            value={attackForm.numDice === 0 ? '' : attackForm.numDice}
+                            onChange={(e) => updateAttackForm({ numDice: e.target.value === '' ? 1 : Math.max(1, parseInt(e.target.value) || 1) })}
+                            placeholder="1"
                             className="w-full p-2 bg-gray-700 rounded text-white"
                           />
                         </div>
@@ -8731,30 +8729,38 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <div className="font-bold text-blue-400 mb-2">TO HIT BONUSES</div>
                     <label className="block text-xs text-gray-400 mb-1">BTH (Base To Hit)</label>
                     <input
-                      type="number"
-                      value={attackForm.bth}
-                      onChange={(e) => updateAttackForm({ bth: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={attackForm.bth === 0 ? '' : attackForm.bth}
+                      onChange={(e) => updateAttackForm({ bth: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Mod (Attribute Modifier)</label>
                     <input
-                      type="number"
-                      value={attackForm.attrMod}
-                      onChange={(e) => updateAttackForm({ attrMod: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={attackForm.attrMod === 0 ? '' : attackForm.attrMod}
+                      onChange={(e) => updateAttackForm({ attrMod: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Magic</label>
                     <input
-                      type="number"
-                      value={attackForm.magic}
-                      onChange={(e) => updateAttackForm({ magic: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={attackForm.magic === 0 ? '' : attackForm.magic}
+                      onChange={(e) => updateAttackForm({ magic: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white mb-2"
                     />
                     <label className="block text-xs text-gray-400 mb-1">Misc</label>
                     <input
-                      type="number"
-                      value={attackForm.misc}
-                      onChange={(e) => updateAttackForm({ misc: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                      type="text"
+                      inputMode="numeric"
+                      value={attackForm.misc === 0 ? '' : attackForm.misc}
+                      onChange={(e) => updateAttackForm({ misc: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white"
                     />
                   </div>
