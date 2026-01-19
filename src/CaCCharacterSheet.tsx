@@ -1186,7 +1186,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // State for import file input
   const [importError, setImportError] = useState(null);
-  const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
   // ===== LOAD DATA ON MOUNT =====
   useEffect(() => {
@@ -1253,19 +1252,11 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       return;
     }
     
-    setSaveStatus('saving');
-    
-    // Schedule the save after 500ms
+    // Schedule the save after 500ms (throttled/debounced)
     saveTimeoutRef.current = setTimeout(() => {
       const dataToSave = pendingSaveRef.current;
-      const success = saveToLocalStorage(dataToSave);
-      setSaveStatus(success ? 'saved' : 'error');
+      saveToLocalStorage(dataToSave);
       saveTimeoutRef.current = null;
-      
-      // Clear the "saved" indicator after 2 seconds
-      if (success) {
-        setTimeout(() => setSaveStatus(''), 2000);
-      }
     }, 500);
     
     return () => {
@@ -2480,6 +2471,38 @@ if (editModal.type === 'acTracking' && char) {
   // Use memoized level info
   const calculateNextLevel = () => memoizedLevelInfo;
 
+  // Swipe navigation handlers (must be before conditional returns to follow hooks rules)
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const touchEndRef = useRef({ x: 0, y: 0 });
+  
+  const handleTouchStart = useCallback((e) => {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    touchEndRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, []);
+  
+  const handleTouchMove = useCallback((e) => {
+    touchEndRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, []);
+  
+  const handleTouchEnd = useCallback(() => {
+    const tabs = ['main', 'attack', 'saves', 'inventory', 'magic', 'dice', 'companion', 'notes'];
+    const deltaX = touchEndRef.current.x - touchStartRef.current.x;
+    const deltaY = touchEndRef.current.y - touchStartRef.current.y;
+    const minSwipeDistance = 50;
+    
+    // Only trigger if horizontal swipe is greater than vertical (to not interfere with scrolling)
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > minSwipeDistance) {
+      const currentIndex = tabs.indexOf(activeTab);
+      if (deltaX < 0 && currentIndex < tabs.length - 1) {
+        // Swipe left - go to next tab
+        setActiveTab(tabs[currentIndex + 1]);
+      } else if (deltaX > 0 && currentIndex > 0) {
+        // Swipe right - go to previous tab
+        setActiveTab(tabs[currentIndex - 1]);
+      }
+    }
+  }, [activeTab]);
+
   // XP-derived level helper (used on the character list screen so it always matches XP).
   // If xpTable/currentXp isn't present (older saves), fall back to stored class1Level.
   const getXpDerivedLevel = (ch) => {
@@ -2522,13 +2545,12 @@ if (editModal.type === 'acTracking' && char) {
         <div className={`max-w-2xl mx-auto ${theme.bgCard} rounded-lg p-8`}>
           <h1 className="text-4xl font-bold mb-4 text-center">Castles & Crusades</h1>
           
-          {/* Save Status Indicator */}
-          <div className="text-center mb-4 h-6">
-            {saveStatus === 'saving' && <span className="text-yellow-400 text-sm">Saving...</span>}
-            {saveStatus === 'saved' && <span className="text-green-400 text-sm">✓ Saved</span>}
-            {saveStatus === 'error' && <span className="text-red-400 text-sm">⚠ Save failed</span>}
-            {importError && <span className="text-red-400 text-sm">{importError}</span>}
-          </div>
+          {/* Import Error Only */}
+          {importError && (
+            <div className="text-center mb-4">
+              <span className="text-red-400 text-sm">{importError}</span>
+            </div>
+          )}
 
           {/* Export/Import Buttons */}
           <div className="flex gap-2 mb-4">
@@ -2651,16 +2673,12 @@ if (editModal.type === 'acTracking' && char) {
   return (
     <>
     <style>{lightThemeStyles}</style>
-    <div className={`min-h-screen ${theme.bg} ${theme.text} p-4 overflow-x-hidden ${!isDarkTheme ? 'light-theme' : ''}`}>
-
-      {/* Header with Save Status */}
-      <div className="max-w-4xl mx-auto mb-2 flex items-center justify-end">
-        <div className="text-sm">
-          {saveStatus === 'saving' && <span className="text-yellow-400">Saving...</span>}
-          {saveStatus === 'saved' && <span className="text-green-400">✓ Saved</span>}
-          {saveStatus === 'error' && <span className="text-red-400">⚠ Save failed</span>}
-        </div>
-      </div>
+    <div 
+      className={`min-h-screen ${theme.bg} ${theme.text} p-4 overflow-x-hidden ${!isDarkTheme ? 'light-theme' : ''}`}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
 
       <div className="max-w-4xl mx-auto mb-4">
         <div className={`flex gap-2 overflow-x-auto ${theme.bgCard} rounded-lg p-2`}>
@@ -2681,6 +2699,15 @@ if (editModal.type === 'acTracking' && char) {
             >
               {label}
             </button>
+          ))}
+        </div>
+        {/* Swipe indicator dots */}
+        <div className="flex justify-center mt-1 gap-1">
+          {['main', 'attack', 'saves', 'inventory', 'magic', 'dice', 'companion', 'notes'].map((tab) => (
+            <div 
+              key={tab}
+              className={`w-2 h-2 rounded-full transition-colors ${activeTab === tab ? 'bg-blue-500' : 'bg-gray-600'}`}
+            />
           ))}
         </div>
       </div>
@@ -3135,7 +3162,6 @@ if (editModal.type === 'acTracking' && char) {
                         <div className="flex items-center gap-2">
                           <span className="text-lg">{expandedAttackIds[attack.id] ? '▼' : '▶'}</span>
                           <h3 className="text-lg font-bold">{attack.weaponId ? getBoundAttackName(attack, char.inventory) : attack.name}</h3>
-                          {attack.isFavorite && <span className="text-yellow-500">★</span>}
                         </div>
                         <div className="text-sm ml-6 mt-1">
                           <span className="text-blue-400">To Hit: <span className="font-semibold">{toHit >= 0 ? '+' : ''}{toHit}</span></span>
@@ -3143,12 +3169,27 @@ if (editModal.type === 'acTracking' && char) {
                           <span className="text-red-400">Damage: <span className="font-semibold">{attack.numDice}d{attack.dieType}{dmgBonus >= 0 ? '+' : ''}{dmgBonus}</span></span>
                         </div>
                       </div>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editAttack', attack }); }} 
-                        className="p-2 bg-gray-600 rounded hover:bg-gray-500 flex-shrink-0"
-                      >
-                        <Edit2 size={16} />
-                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const updated = (char.attacks || []).map(a =>
+                              a.id === attack.id ? { ...a, isFavorite: !a.isFavorite } : a
+                            );
+                            updateChar({ attacks: updated });
+                          }}
+                          className={`p-2 rounded hover:bg-gray-500 ${attack.isFavorite ? 'text-yellow-400' : 'text-gray-500'}`}
+                          title={attack.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                        >
+                          <span className="text-xl">{attack.isFavorite ? '★' : '☆'}</span>
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editAttack', attack }); }} 
+                          className="p-2 bg-gray-600 rounded hover:bg-gray-500"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
