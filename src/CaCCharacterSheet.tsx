@@ -1,6 +1,72 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Plus, Minus, Edit2, X, Trash2, Download, Upload } from 'lucide-react';
 
+// Light theme CSS overrides
+const lightThemeStyles = `
+  .light-theme {
+    --bg-primary: #f3f4f6;
+    --bg-card: #ffffff;
+    --bg-card-2: #e5e7eb;
+    --bg-card-3: #d1d5db;
+    --bg-input: #ffffff;
+    --text-primary: #111827;
+    --text-muted: #6b7280;
+    --border-color: #d1d5db;
+  }
+  .light-theme .bg-gray-900 { background-color: var(--bg-primary) !important; }
+  .light-theme .bg-gray-800 { background-color: var(--bg-card) !important; border: 1px solid var(--border-color); }
+  .light-theme .bg-gray-700 { background-color: var(--bg-card-2) !important; }
+  .light-theme .bg-gray-600 { background-color: var(--bg-card-3) !important; }
+  .light-theme .text-white { color: var(--text-primary) !important; }
+  .light-theme .text-gray-400 { color: var(--text-muted) !important; }
+  .light-theme .text-gray-300 { color: #374151 !important; }
+  .light-theme .text-gray-200 { color: #1f2937 !important; }
+  .light-theme .border-gray-600 { border-color: var(--border-color) !important; }
+  .light-theme .border-gray-700 { border-color: #e5e7eb !important; }
+  .light-theme input, .light-theme textarea, .light-theme select {
+    background-color: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+  }
+  .light-theme .hover\\:bg-gray-600:hover { background-color: #d1d5db !important; }
+  .light-theme .hover\\:bg-gray-500:hover { background-color: #9ca3af !important; }
+  
+  /* Lighten colored buttons for better black text contrast */
+  .light-theme .bg-blue-600 { background-color: #93c5fd !important; }
+  .light-theme .bg-blue-700 { background-color: #60a5fa !important; }
+  .light-theme .hover\\:bg-blue-700:hover { background-color: #60a5fa !important; }
+  .light-theme .hover\\:bg-blue-500:hover { background-color: #93c5fd !important; }
+  
+  .light-theme .bg-purple-600 { background-color: #c4b5fd !important; }
+  .light-theme .bg-purple-700 { background-color: #a78bfa !important; }
+  .light-theme .hover\\:bg-purple-700:hover { background-color: #a78bfa !important; }
+  
+  .light-theme .bg-green-600 { background-color: #86efac !important; }
+  .light-theme .bg-green-700 { background-color: #4ade80 !important; }
+  .light-theme .hover\\:bg-green-700:hover { background-color: #4ade80 !important; }
+  
+  .light-theme .bg-red-600 { background-color: #fca5a5 !important; }
+  .light-theme .bg-red-700 { background-color: #f87171 !important; }
+  .light-theme .hover\\:bg-red-700:hover { background-color: #f87171 !important; }
+  
+  .light-theme .bg-yellow-600 { background-color: #fde047 !important; }
+  .light-theme .bg-yellow-700 { background-color: #facc15 !important; }
+  .light-theme .hover\\:bg-yellow-700:hover { background-color: #facc15 !important; }
+  
+  .light-theme .bg-orange-600 { background-color: #fdba74 !important; }
+  .light-theme .bg-orange-700 { background-color: #fb923c !important; }
+  .light-theme .hover\\:bg-orange-700:hover { background-color: #fb923c !important; }
+  
+  /* Critical hit text - use darker gold/orange in light mode */
+  .light-theme .text-yellow-400 { color: #b45309 !important; }
+  .light-theme .text-yellow-500 { color: #a16207 !important; }
+  .light-theme .text-yellow-200 { color: #92400e !important; }
+  
+  /* Yellow backgrounds for critical sections */
+  .light-theme .bg-yellow-900 { background-color: #fef3c7 !important; border-color: #f59e0b !important; }
+  .light-theme .border-yellow-600 { border-color: #d97706 !important; }
+`;
+
 // ===== LOCAL STORAGE PERSISTENCE =====
 const STORAGE_KEY = 'cac-character-sheet-data';
 const STORAGE_VERSION = 1;
@@ -623,6 +689,41 @@ export default function CaCCharacterSheet() {
   const [editModal, setEditModal] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Theme state - persisted to localStorage
+  const [isDarkTheme, setIsDarkTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('cac-theme');
+      return saved !== 'light'; // Default to dark
+    }
+    return true;
+  });
+  
+  // Toggle theme and persist
+  const toggleTheme = useCallback(() => {
+    setIsDarkTheme(prev => {
+      const newTheme = !prev;
+      localStorage.setItem('cac-theme', newTheme ? 'dark' : 'light');
+      return newTheme;
+    });
+  }, []);
+
+  // Theme classes helper
+  const theme = {
+    bg: isDarkTheme ? 'bg-gray-900' : 'bg-gray-100',
+    bgCard: isDarkTheme ? 'bg-gray-800' : 'bg-white',
+    bgCard2: isDarkTheme ? 'bg-gray-700' : 'bg-gray-200',
+    bgCard3: isDarkTheme ? 'bg-gray-600' : 'bg-gray-300',
+    bgInput: isDarkTheme ? 'bg-gray-700' : 'bg-white border border-gray-300',
+    bgInput2: isDarkTheme ? 'bg-gray-800' : 'bg-gray-100 border border-gray-300',
+    text: isDarkTheme ? 'text-white' : 'text-gray-900',
+    textMuted: isDarkTheme ? 'text-gray-400' : 'text-gray-600',
+    textMuted2: isDarkTheme ? 'text-gray-300' : 'text-gray-700',
+    border: isDarkTheme ? 'border-gray-600' : 'border-gray-300',
+    border2: isDarkTheme ? 'border-gray-700' : 'border-gray-200',
+    hover: isDarkTheme ? 'hover:bg-gray-600' : 'hover:bg-gray-300',
+    hover2: isDarkTheme ? 'hover:bg-gray-500' : 'hover:bg-gray-400',
+  };
+  
   // In-app confirmation modal (replaces browser confirm())
   const [confirmModal, setConfirmModal] = useState(null);
   // Usage: setConfirmModal({ message: 'Delete?', onConfirm: () => doSomething() })
@@ -654,6 +755,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [hpDraftLevels, setHpDraftLevels] = useState([0, 0, 0]);
   const [addAttackModalOpen, setAddAttackModalOpen] = useState(false);
   const [expandedAttackIds, setExpandedAttackIds] = useState({}); // Track which attacks are expanded
+  const [selectedAmmoIds, setSelectedAmmoIds] = useState({}); // Track selected ammo per attack { [attackId]: inventoryItemId }
 
   const [rollModal, setRollModal] = useState(null);
   const [rollResult, setRollResult] = useState(null);
@@ -682,6 +784,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     isGrimoire: false,
     hasEffects: false,
     isWeapon: false,
+    isAmmo: false,
     // Magic casting
     magicCastingDescription: '',
     magicCastingCapacity: 0,
@@ -794,6 +897,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemAttrBonusValueText = itemModal.attrBonusValueText;
   const itemStatBonuses = itemModal.statBonuses;
   const itemIsWeapon = itemModal.isWeapon;
+  const itemIsAmmo = itemModal.isAmmo;
   const itemWeaponType = itemModal.weaponType;
   const itemWeaponMelee = itemModal.weaponMelee;
   const itemWeaponRanged = itemModal.weaponRanged;
@@ -820,6 +924,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemAttrBonusValueText = useCallback((v) => updateItemModal({ attrBonusValueText: v }), [updateItemModal]);
   const setItemStatBonuses = useCallback((v) => updateItemModal({ statBonuses: typeof v === 'function' ? v(itemModal.statBonuses) : v }), [updateItemModal, itemModal.statBonuses]);
   const setItemIsWeapon = useCallback((v) => updateItemModal({ isWeapon: v }), [updateItemModal]);
+  const setItemIsAmmo = useCallback((v) => updateItemModal({ isAmmo: v }), [updateItemModal]);
   const setItemWeaponType = useCallback((v) => updateItemModal({ weaponType: v }), [updateItemModal]);
   const setItemWeaponMelee = useCallback((v) => updateItemModal({ weaponMelee: v }), [updateItemModal]);
   const setItemWeaponRanged = useCallback((v) => updateItemModal({ weaponRanged: v }), [updateItemModal]);
@@ -1689,7 +1794,24 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       updateModalForm({ 
         magicItemSpellSelect: '', 
         magicItemSpellCopies: 1, 
-        magicItemSpellPermanent: false 
+        magicItemSpellPermanent: false,
+        magicItemSpellMode: 'learned', // 'learned' or 'itemOnly'
+        // Item-only spell fields (same as regular spell form)
+        itemOnlySpellName: '',
+        itemOnlySpellLevel: 0,
+        itemOnlySpellDescription: '',
+        itemOnlySpellPrepTime: '1 action',
+        itemOnlySpellRange: 'Touch',
+        itemOnlySpellDuration: 'Instant',
+        itemOnlySpellAoe: '',
+        itemOnlySpellSavingThrow: '',
+        itemOnlySpellResistance: false,
+        itemOnlySpellHasDice: false,
+        itemOnlySpellDiceType: '',
+        itemOnlySpellVerbal: false,
+        itemOnlySpellSomatic: false,
+        itemOnlySpellMaterial: false,
+        itemOnlySpellMaterialDesc: '',
       });
     }
     
@@ -1717,6 +1839,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemMagicCastingCapacityText('');
 
       setItemIsWeapon(false);
+      setItemIsAmmo(false);
       setItemWeaponType('melee');
       setItemWeaponMelee(true);
       setItemWeaponRanged(false);
@@ -1772,6 +1895,7 @@ setNewEffectMiscToHit(0);
       setItemMagicCastingCapacityText(String(Number(editModal.item?.magicCastingCapacity) || 0));
 
       setItemIsWeapon(!!editModal.item?.isWeapon);
+      setItemIsAmmo(!!editModal.item?.isAmmo);
       setItemWeaponType(editModal.item?.weaponType || 'melee');
       setItemWeaponMelee(!!(editModal.item?.weaponMelee ?? ((editModal.item?.weaponType || 'melee') === 'melee')));
       setItemWeaponRanged(!!(editModal.item?.weaponRanged ?? ((editModal.item?.weaponType || 'melee') === 'ranged')));
@@ -2380,18 +2504,22 @@ if (editModal.type === 'acTracking' && char) {
     // Show loading screen
     if (isLoading) {
       return (
-        <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-4xl font-bold mb-4">Castles & Crusades</div>
-            <div className="text-gray-400">Loading...</div>
+        <>
+          <style>{lightThemeStyles}</style>
+          <div className={`min-h-screen ${theme.bg} ${theme.text} flex items-center justify-center ${!isDarkTheme ? 'light-theme' : ''}`}>
+            <div className="text-center">
+              <div className="text-4xl font-bold mb-4">Castles & Crusades</div>
+              <div className={theme.textMuted}>Loading...</div>
+            </div>
           </div>
-        </div>
+        </>
       );
     }
     
     return (<>
-      <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
-        <div className="max-w-2xl mx-auto bg-gray-800 rounded-lg p-8">
+      <style>{lightThemeStyles}</style>
+      <div className={`min-h-screen ${theme.bg} ${theme.text} p-4 overflow-x-hidden ${!isDarkTheme ? 'light-theme' : ''}`}>
+        <div className={`max-w-2xl mx-auto ${theme.bgCard} rounded-lg p-8`}>
           <h1 className="text-4xl font-bold mb-4 text-center">Castles & Crusades</h1>
           
           {/* Save Status Indicator */}
@@ -2407,14 +2535,14 @@ if (editModal.type === 'acTracking' && char) {
             <button
               onClick={handleExport}
               disabled={characters.length === 0}
-              className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+              className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1`}
             >
               <Download size={14} />
               Export
             </button>
             <button
               onClick={handleImportClick}
-              className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 flex items-center justify-center gap-1"
+              className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} flex items-center justify-center gap-1`}
             >
               <Upload size={14} />
               Import
@@ -2426,13 +2554,13 @@ if (editModal.type === 'acTracking' && char) {
               setCharacters([...characters, createNewCharacter()]);
               setCurrentCharIndex(characters.length);
             }}
-            className="w-full py-4 bg-green-600 rounded-lg text-xl font-bold mb-6 hover:bg-green-700"
+            className="w-full py-4 bg-green-600 rounded-lg text-xl font-bold mb-6 hover:bg-green-700 text-white"
           >
             + Create New Character
           </button>
           <h2 className="text-2xl font-bold mb-4">Your Characters</h2>
           {characters.length === 0 && (
-            <div className="text-center text-gray-400 py-8">
+            <div className={`text-center ${theme.textMuted} py-8`}>
               <p>No characters yet.</p>
               <p className="text-sm mt-2">Create a new character or import a backup file.</p>
             </div>
@@ -2441,16 +2569,16 @@ if (editModal.type === 'acTracking' && char) {
             <div key={c.id} className="flex items-center gap-2 mb-3">
               <button
                 onClick={() => setCurrentCharIndex(i)}
-                className="flex-1 p-4 bg-gray-700 rounded-lg text-left hover:bg-gray-600"
+                className={`flex-1 p-4 ${theme.bgCard2} rounded-lg text-left ${theme.hover}`}
               >
                 <div className="text-xl font-bold">{c.name}</div>
-                <div className="text-gray-400">
+                <div className={theme.textMuted}>
                   {c.race} {c.class1} {getXpDerivedLevel(c)}{c.class2 && ` / ${c.class2} ${c.class2Level}`}
                 </div>
               </button>
               <button 
                 onClick={() => setEditModal({ type: 'confirmDeleteCharacter', index: i })} 
-                className="p-4 bg-red-600 rounded-lg hover:bg-red-700"
+                className="p-4 bg-red-600 rounded-lg hover:bg-red-700 text-white"
               >
                 <Trash2 size={20} />
               </button>
@@ -2458,7 +2586,13 @@ if (editModal.type === 'acTracking' && char) {
           ))}
 
           {/* App Info */}
-          <div className="text-center text-gray-500 text-sm mt-8 pt-4 border-t border-gray-700">
+          <div className={`text-center text-sm mt-8 pt-4 border-t ${theme.border2} ${theme.textMuted}`}>
+            <button
+              onClick={toggleTheme}
+              className={`mb-3 px-4 py-2 rounded-lg ${theme.bgCard2} ${theme.hover} ${theme.text} flex items-center gap-2 mx-auto`}
+            >
+              {isDarkTheme ? '☀️ Light Mode' : '🌙 Dark Mode'}
+            </button>
             <div>C&C Character Sheet v1.0</div>
             <div>Created by Rwpull</div>
           </div>
@@ -2515,7 +2649,9 @@ if (editModal.type === 'acTracking' && char) {
   const { nextLevelXp, progress, canLevelUp, currentLevel } = calculateNextLevel();
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 overflow-x-hidden">
+    <>
+    <style>{lightThemeStyles}</style>
+    <div className={`min-h-screen ${theme.bg} ${theme.text} p-4 overflow-x-hidden ${!isDarkTheme ? 'light-theme' : ''}`}>
 
       {/* Header with Save Status */}
       <div className="max-w-4xl mx-auto mb-2 flex items-center justify-end">
@@ -2527,7 +2663,7 @@ if (editModal.type === 'acTracking' && char) {
       </div>
 
       <div className="max-w-4xl mx-auto mb-4">
-        <div className="flex gap-2 overflow-x-auto bg-gray-800 rounded-lg p-2">
+        <div className={`flex gap-2 overflow-x-auto ${theme.bgCard} rounded-lg p-2`}>
           {[
             { id: 'main', label: 'Main' },
             { id: 'attack', label: 'Attack' },
@@ -2961,6 +3097,32 @@ if (editModal.type === 'acTracking' && char) {
                 + (eff.miscDamage || 0)
                 + (eff.magicDamage || 0);
 
+              // Get available ammo items for ranged attacks
+              const availableAmmo = isRanged 
+                ? (char.inventory || []).filter(it => it.isAmmo && it.quantity > 0)
+                : [];
+              const selectedAmmoId = selectedAmmoIds[attack.id] || '';
+              const selectedAmmoItem = availableAmmo.find(it => String(it.id) === selectedAmmoId);
+
+              // Function to consume one ammo
+              const consumeAmmo = () => {
+                if (!selectedAmmoId || !selectedAmmoItem) return;
+                const newInv = (char.inventory || [])
+                  .map(i => i.id === selectedAmmoItem.id 
+                    ? { ...i, quantity: Math.max(0, i.quantity - 1) } 
+                    : i
+                  )
+                  .filter(i => i.quantity > 0);
+                updateChar({ inventory: newInv });
+                
+                // If ammo ran out, clear selection
+                const remaining = newInv.find(i => String(i.id) === selectedAmmoId);
+                if (!remaining) {
+                  setSelectedAmmoIds(prev => ({ ...prev, [attack.id]: '' }));
+                  showToast(`Out of ${selectedAmmoItem.name}!`, 'warning');
+                }
+              };
+
               return (
                 <div key={attack.id} className="bg-gray-700 rounded overflow-hidden">
                   {/* Collapsed Header - Always visible */}
@@ -3012,9 +3174,37 @@ if (editModal.type === 'acTracking' && char) {
                               </div>
                             )}
                           </div>
+
+                          {/* Ammo selector for ranged attacks */}
+                          {isRanged && (
+                            <div className="mb-2 p-2 bg-gray-900 rounded">
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-400 whitespace-nowrap">Ammo:</label>
+                                <select
+                                  value={selectedAmmoId}
+                                  onChange={(e) => setSelectedAmmoIds(prev => ({ ...prev, [attack.id]: e.target.value }))}
+                                  className="flex-1 p-1 bg-gray-700 rounded text-white text-sm"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">N/A</option>
+                                  {availableAmmo.map(ammo => (
+                                    <option key={ammo.id} value={String(ammo.id)}>
+                                      {ammo.name} ({ammo.quantity})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              {selectedAmmoItem && (
+                                <div className="text-xs text-gray-400 mt-1">
+                                  {selectedAmmoItem.quantity} remaining
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <button
                             onClick={() => {
-                              setRollModal({ type: 'attack', attack, toHit });
+                              setRollModal({ type: 'attack', attack, toHit, manualRoll: '' });
                               setRollResult(null);
                             }}
                             className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
@@ -3026,27 +3216,49 @@ if (editModal.type === 'acTracking' && char) {
                               <button
                                 onClick={() => {
                                   const roll = rollDice(20);
-                                  setRollResult({ roll, total: roll + toHit });
+                                  setRollResult({ roll, total: roll + toHit, isCrit: roll === 20, isCritFail: roll === 1 });
+                                  if (isRanged && selectedAmmoId) consumeAmmo();
                                 }}
                                 className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                               >
-                                Roll d20
+                                Roll d20{isRanged && selectedAmmoId ? ' (uses ammo)' : ''}
                               </button>
-                              <input
-                                type="text" inputMode="numeric"
-                                placeholder="Or enter roll (1-20)"
-                                onChange={(e) => {
-                                  const val = parseInt(e.target.value);
-                                  if (val >= 1 && val <= 20) {
-                                    setRollResult({ roll: val, total: val + toHit });
-                                  }
-                                }}
-                                className="w-full p-1 bg-gray-800 rounded text-white text-sm"
-                              />
+                              <div className="flex gap-1 mt-1">
+                                <input
+                                  type="text" inputMode="numeric"
+                                  placeholder="Enter roll (1-20)"
+                                  value={rollModal.manualRoll || ''}
+                                  onChange={(e) => setRollModal({ ...rollModal, manualRoll: e.target.value })}
+                                  className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                />
+                                <button
+                                  onClick={() => {
+                                    const val = parseInt(rollModal.manualRoll);
+                                    if (val >= 1 && val <= 20) {
+                                      setRollResult({ roll: val, total: val + toHit, isCrit: val === 20, isCritFail: val === 1 });
+                                      if (isRanged && selectedAmmoId) consumeAmmo();
+                                      setRollModal({ ...rollModal, manualRoll: '' });
+                                    } else {
+                                      showToast('Enter a number between 1-20', 'error');
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-700"
+                                >
+                                  Calc
+                                </button>
+                              </div>
                               {rollResult && (
                                 <div className="mt-2 text-center text-sm">
+                                  {rollResult.isCrit && (
+                                    <div className="text-xl font-bold text-yellow-400 underline mb-1">Critical!</div>
+                                  )}
+                                  {rollResult.isCritFail && (
+                                    <div className="text-xl font-bold text-red-500 underline mb-1">Critical Fail!</div>
+                                  )}
                                   <div>d20: {rollResult.roll} + {toHit}</div>
-                                  <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
+                                  <div className={`text-xl font-bold ${rollResult.isCritFail ? 'text-red-400' : 'text-green-400'}`}>
+                                    Total: {rollResult.total}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -3055,6 +3267,17 @@ if (editModal.type === 'acTracking' && char) {
 
                         <div className="bg-gray-800 p-3 rounded">
                           <div className="font-bold text-red-400 mb-2">DAMAGE</div>
+                          
+                          {/* Check if we have a critical hit from attack roll */}
+                          {rollResult?.isCrit && rollModal?.type !== 'damage' && (
+                            <div className="bg-yellow-900 border border-yellow-600 rounded p-2 mb-2 text-center">
+                              <div className="text-yellow-400 font-bold text-sm">Critical Hit!</div>
+                              <div className="text-xs text-yellow-200">
+                                Max dice ({attack.numDice}×{attack.dieType} = {attack.numDice * attack.dieType}) + bonus + d4
+                              </div>
+                            </div>
+                          )}
+                          
                           <div className="text-sm space-y-1 mb-2">
                             <div>Dice: {attack.numDice}d{attack.dieType}</div>
                             <div>Mod: {((abilityDamageMod + (attack.damageMod || 0)) >= 0 ? "+" : "")}{abilityDamageMod + (attack.damageMod || 0)}{(!isRanged && autoMods) ? " (STR)" : ""}</div>
@@ -3066,78 +3289,158 @@ if (editModal.type === 'acTracking' && char) {
                             </div>
                           </div>
                           {(attack.useDamageDice ?? (Number(attack.numDice || 0) > 0)) && (Number(attack.numDice || 0) > 0) && (
-                            <button
-                              onClick={() => {
-                                setRollModal({ type: 'damage', attack, dmgBonus, diceCount: attack.numDice });
-                                setRollResult(null);
-                              }}
-                              className="w-full py-2 bg-red-600 rounded hover:bg-red-700"
-                            >
-                              Roll Damage
-                            </button>
+                            <>
+                              {/* Normal damage button */}
+                              <button
+                                onClick={() => {
+                                  setRollModal({ type: 'damage', attack, dmgBonus, diceCount: attack.numDice, isCritDamage: false });
+                                }}
+                                className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mb-1"
+                              >
+                                Roll Damage
+                              </button>
+                              
+                              {/* Critical damage button - only show if attack was a crit */}
+                              {rollResult?.isCrit && rollModal?.type !== 'damage' && (
+                                <button
+                                  onClick={() => {
+                                    setRollModal({ type: 'damage', attack, dmgBonus, diceCount: attack.numDice, isCritDamage: true, critD4: '', critD4Result: null });
+                                  }}
+                                  className="w-full py-2 bg-yellow-600 rounded hover:bg-yellow-700 font-bold"
+                                >
+                                  Roll Critical Damage
+                                </button>
+                              )}
+                            </>
                           )}
                           {rollModal?.attack?.id === attack.id && rollModal.type === 'damage' && (
                             <div className="mt-2 p-2 bg-gray-600 rounded">
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                              <label className="text-xs text-gray-300 whitespace-nowrap">Dice #</label>
-                              <input
-                                type="text" inputMode="numeric"
-                                value={rollModal.diceCount ?? attack.numDice}
-                                onChange={(e) => {
-                                  const v = e.target.value === '' ? '' : (parseInt(e.target.value || '0', 10) || 0);
-                                  setRollModal({ ...rollModal, diceCount: typeof v === 'number' ? Math.max(0, v) : v });
-                                }}
-                                className="w-14 p-1 bg-gray-800 rounded text-white text-xs text-center"
-                              />
-                              <div className="text-xs text-gray-400">d{attack.dieType}</div>
-                            </div>
+                              {/* Critical damage mode */}
+                              {rollModal.isCritDamage ? (
+                                <>
+                                  <div className="bg-yellow-900 border border-yellow-600 rounded p-2 mb-2 text-center">
+                                    <div className="text-yellow-400 font-bold">Critical Damage</div>
+                                    <div className="text-sm text-yellow-200">
+                                      Max dice: {attack.numDice * attack.dieType} + Bonus: {dmgBonus} = {attack.numDice * attack.dieType + dmgBonus}
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="text-xs text-gray-300 mb-1">Roll or enter d4 for extra damage:</div>
+                                  <button
+                                    onClick={() => {
+                                      const d4Roll = rollDice(4);
+                                      const maxDice = attack.numDice * attack.dieType;
+                                      const critTotal = maxDice + dmgBonus + d4Roll;
+                                      setRollResult({ 
+                                        isCritDamage: true,
+                                        maxDice,
+                                        d4Roll,
+                                        bonus: dmgBonus,
+                                        total: critTotal
+                                      });
+                                    }}
+                                    className="w-full py-1 bg-green-600 rounded text-sm mb-1"
+                                  >
+                                    Roll d4
+                                  </button>
+                                  <div className="flex gap-1 mt-1">
+                                    <input
+                                      type="text" inputMode="numeric"
+                                      placeholder="Enter d4 (1-4)"
+                                      value={rollModal.critD4 || ''}
+                                      onChange={(e) => setRollModal({ ...rollModal, critD4: e.target.value })}
+                                      className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        const val = parseInt(rollModal.critD4);
+                                        if (val >= 1 && val <= 4) {
+                                          const maxDice = attack.numDice * attack.dieType;
+                                          const critTotal = maxDice + dmgBonus + val;
+                                          setRollResult({ 
+                                            isCritDamage: true,
+                                            maxDice,
+                                            d4Roll: val,
+                                            bonus: dmgBonus,
+                                            total: critTotal
+                                          });
+                                          setRollModal({ ...rollModal, critD4: '' });
+                                        } else {
+                                          showToast('Enter a number between 1-4', 'error');
+                                        }
+                                      }}
+                                      className="px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-700"
+                                    >
+                                      Calc
+                                    </button>
+                                  </div>
+                                  {rollResult?.isCritDamage && (
+                                    <div className="mt-2 text-center text-sm">
+                                      <div>Max Dice: {rollResult.maxDice} + Bonus: {rollResult.bonus} + d4: {rollResult.d4Roll}</div>
+                                      <div className="text-2xl font-bold text-yellow-400">Total: {rollResult.total}</div>
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                /* Normal damage mode */
+                                <>
+                                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                                    <label className="text-xs text-gray-300 whitespace-nowrap">Dice #</label>
+                                    <input
+                                      type="text" inputMode="numeric"
+                                      value={rollModal.diceCount ?? attack.numDice}
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? '' : (parseInt(e.target.value || '0', 10) || 0);
+                                        setRollModal({ ...rollModal, diceCount: typeof v === 'number' ? Math.max(0, v) : v });
+                                      }}
+                                      className="w-14 p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                    />
+                                    <div className="text-xs text-gray-400">d{attack.dieType}</div>
+                                  </div>
 
-                              <button
-                                onClick={() => {
-                                  const rolls = [];
-                                  for (let i = 0; i < (rollModal.diceCount ?? attack.numDice); i++) {
-                                    rolls.push(rollDice(attack.dieType));
-                                  }
-                                  const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                  setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
-                                }}
-                                className="w-full py-1 bg-green-600 rounded text-sm mb-1"
-                              >
-                                Roll {rollModal.diceCount ?? attack.numDice}d{attack.dieType}
-                              </button>
-                              <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                              <div className="grid grid-cols-4 gap-1 mb-1">
-                                {Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => (
-                                  <input
-                                    key={i}
-                                    type="text" inputMode="numeric"
-                                    placeholder={`d${attack.dieType}`}
-                                    className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                    id={`dmg-${attack.id}-${i}`}
-                                  />
-                                ))}
-                              </div>
-                              <button
-                                onClick={() => {
-                                  const rolls = Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => {
-                                    const val = parseInt(document.getElementById(`dmg-${attack.id}-${i}`).value);
-                                    return val || 0;
-                                  });
-                                  if (rolls.every(r => r > 0)) {
-                                    const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                    setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
-                                  }
-                                }}
-                                className="w-full py-1 bg-blue-600 rounded text-xs"
-                              >
-                                Calculate
-                              </button>
-                              {rollResult?.rolls && (
-                                <div className="mt-2 text-center text-sm">
-                                  <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.diceTotal}</div>
-                                  <div>Bonus: +{dmgBonus}</div>
-                                  <div className="text-xl font-bold text-red-400">Total: {rollResult.total}</div>
-                                </div>
+                                  <button
+                                    onClick={() => {
+                                      const rolls = [];
+                                      for (let i = 0; i < (rollModal.diceCount ?? attack.numDice); i++) {
+                                        rolls.push(rollDice(attack.dieType));
+                                      }
+                                      const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                      setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
+                                    }}
+                                    className="w-full py-1 bg-green-600 rounded text-sm mb-1"
+                                  >
+                                    Roll {rollModal.diceCount ?? attack.numDice}d{attack.dieType}
+                                  </button>
+                                  <div className="flex gap-1 mt-1">
+                                    <input
+                                      type="text" inputMode="numeric"
+                                      placeholder="Enter total dice roll"
+                                      value={rollModal.manualDamage || ''}
+                                      onChange={(e) => setRollModal({ ...rollModal, manualDamage: e.target.value })}
+                                      className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        const val = parseInt(rollModal.manualDamage);
+                                        if (val > 0) {
+                                          setRollResult({ rolls: [val], diceTotal: val, total: val + dmgBonus });
+                                          setRollModal({ ...rollModal, manualDamage: '' });
+                                        } else {
+                                          showToast('Enter a valid damage roll', 'error');
+                                        }
+                                      }}
+                                      className="px-3 py-1 bg-blue-600 rounded text-sm hover:bg-blue-700"
+                                    >
+                                      Calc
+                                    </button>
+                                  </div>
+                                  {rollResult?.rolls && (
+                                    <div className="mt-2 text-center text-sm">
+                                      <div>Dice: {rollResult.diceTotal} + {dmgBonus}</div>
+                                      <div className="text-xl font-bold text-red-400">Total: {rollResult.total}</div>
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           )}
@@ -7135,6 +7438,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           />
                           Weapon Effects
                         </label>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsAmmo}
+                            onChange={(e) => setItemIsAmmo(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Ammo
+                        </label>
                       </>
                     )}
                   </div>
@@ -7560,6 +7873,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         isArmor: !!itemIsArmor,
                         isShield: !!itemIsShield,
                         isWeapon: !!itemIsWeapon,
+                        isAmmo: !!itemIsAmmo,
                         weaponType: itemIsWeapon ? ((itemWeaponRanged && !itemWeaponMelee) ? 'ranged' : 'melee') : undefined,
                         weaponMelee: itemIsWeapon ? !!itemWeaponMelee : false,
                         weaponRanged: itemIsWeapon ? !!itemWeaponRanged : false,
@@ -8120,31 +8434,229 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
               {editModal.type === 'newMagicItemSpell' && (
                 <div className="space-y-3">
-                  <div className="text-sm text-gray-300">
-                    Choose a spell from <span className="font-semibold">Spells Learned</span>, or add a new spell first.
+                  {/* Mode Selection */}
+                  <div className="flex gap-4 p-3 bg-gray-900 rounded">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="spellMode"
+                        checked={modalForms.magicItemSpellMode === 'learned'}
+                        onChange={() => updateModalForm({ magicItemSpellMode: 'learned' })}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">From Spells Learned</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="spellMode"
+                        checked={modalForms.magicItemSpellMode === 'itemOnly'}
+                        onChange={() => updateModalForm({ magicItemSpellMode: 'itemOnly' })}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">Item Only (not learned)</span>
+                    </label>
                   </div>
 
-                  <label className="block text-sm text-gray-400 mb-1">Choose Spell (from Spells Learned)</label>
-                  <select 
-                    value={modalForms.magicItemSpellSelect}
-                    onChange={(e) => updateModalForm({ magicItemSpellSelect: e.target.value })}
-                    className="w-full p-2 bg-gray-700 rounded text-white"
-                  >
-                    <option value="">-- Select a spell --</option>
-                    {sortedSpellsLearned.map((s) => (
-                      <option key={s.id || s.name} value={s.name}>
-                        L{s.level ?? 0} {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  {/* From Spells Learned Mode */}
+                  {modalForms.magicItemSpellMode === 'learned' && (
+                    <>
+                      <div className="text-sm text-gray-300">
+                        Choose a spell from <span className="font-semibold">Spells Learned</span>, or add a new spell first.
+                      </div>
 
-                  <button
-                    onClick={openNewSpellModal}
-                    className="w-full py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
-                  >
-                    + Add New Spell to Spells Learned
-                  </button>
+                      <label className="block text-sm text-gray-400 mb-1">Choose Spell</label>
+                      <select 
+                        value={modalForms.magicItemSpellSelect}
+                        onChange={(e) => updateModalForm({ magicItemSpellSelect: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                      >
+                        <option value="">-- Select a spell --</option>
+                        {sortedSpellsLearned.map((s) => (
+                          <option key={s.id || s.name} value={s.name}>
+                            L{s.level ?? 0} {s.name}
+                          </option>
+                        ))}
+                      </select>
 
+                      <button
+                        onClick={openNewSpellModal}
+                        className="w-full py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
+                      >
+                        + Add New Spell to Spells Learned
+                      </button>
+                    </>
+                  )}
+
+                  {/* Item Only Mode */}
+                  {modalForms.magicItemSpellMode === 'itemOnly' && (
+                    <div className="max-h-80 overflow-y-auto pr-2 space-y-3">
+                      <div className="text-sm text-gray-300 bg-gray-900 p-2 rounded">
+                        This spell will only exist in this item and won't be added to Spells Learned.
+                      </div>
+
+                      <label className="block text-sm text-gray-400 mb-1">Spell Name *</label>
+                      <input
+                        type="text"
+                        value={modalForms.itemOnlySpellName}
+                        onChange={(e) => updateModalForm({ itemOnlySpellName: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="e.g. Fireball"
+                      />
+
+                      <label className="block text-sm text-gray-400 mb-1">Spell Level (0-9)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={modalForms.itemOnlySpellLevel === 0 ? '' : modalForms.itemOnlySpellLevel}
+                        onChange={(e) => updateModalForm({ itemOnlySpellLevel: e.target.value === '' ? 0 : Math.min(9, Math.max(0, parseInt(e.target.value) || 0)) })}
+                        placeholder="0"
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                      />
+
+                      <label className="block text-sm text-gray-400 mb-1">Description</label>
+                      <textarea
+                        value={modalForms.itemOnlySpellDescription}
+                        onChange={(e) => updateModalForm({ itemOnlySpellDescription: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white h-16"
+                        placeholder="Spell effect..."
+                      />
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Prep Time</label>
+                          <input
+                            type="text"
+                            value={modalForms.itemOnlySpellPrepTime}
+                            onChange={(e) => updateModalForm({ itemOnlySpellPrepTime: e.target.value })}
+                            placeholder="e.g., 1 action"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Range</label>
+                          <input
+                            type="text"
+                            value={modalForms.itemOnlySpellRange}
+                            onChange={(e) => updateModalForm({ itemOnlySpellRange: e.target.value })}
+                            placeholder="e.g., 60 ft"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Duration</label>
+                          <input
+                            type="text"
+                            value={modalForms.itemOnlySpellDuration}
+                            onChange={(e) => updateModalForm({ itemOnlySpellDuration: e.target.value })}
+                            placeholder="e.g., Instantaneous"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Area of Effect</label>
+                          <input
+                            type="text"
+                            value={modalForms.itemOnlySpellAoe}
+                            onChange={(e) => updateModalForm({ itemOnlySpellAoe: e.target.value })}
+                            placeholder="e.g., 30 ft radius"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-1">Saving Throw</label>
+                        <input
+                          type="text"
+                          value={modalForms.itemOnlySpellSavingThrow}
+                          onChange={(e) => updateModalForm({ itemOnlySpellSavingThrow: e.target.value })}
+                          placeholder="e.g., Dex half"
+                          className="w-full p-2 bg-gray-700 rounded text-white"
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={modalForms.itemOnlySpellResistance}
+                          onChange={(e) => updateModalForm({ itemOnlySpellResistance: e.target.checked })}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm font-bold">Spell Resistance</span>
+                      </label>
+
+                      <div className="p-3 bg-gray-900 rounded space-y-2">
+                        <div className="font-bold text-sm">Dice Roll</div>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={modalForms.itemOnlySpellHasDice}
+                            onChange={(e) => updateModalForm({ itemOnlySpellHasDice: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">Has Dice Roll</span>
+                        </label>
+                        {modalForms.itemOnlySpellHasDice && (
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Dice Type (e.g., d6, 2d8)</label>
+                            <input
+                              type="text"
+                              value={modalForms.itemOnlySpellDiceType}
+                              onChange={(e) => updateModalForm({ itemOnlySpellDiceType: e.target.value })}
+                              placeholder="e.g., d6"
+                              className="w-full p-2 bg-gray-700 rounded text-white text-sm"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="p-3 bg-gray-900 rounded space-y-2">
+                        <div className="font-bold text-sm">Components</div>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={modalForms.itemOnlySpellVerbal}
+                            onChange={(e) => updateModalForm({ itemOnlySpellVerbal: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">Verbal (V)</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={modalForms.itemOnlySpellSomatic}
+                            onChange={(e) => updateModalForm({ itemOnlySpellSomatic: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">Somatic (S)</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={modalForms.itemOnlySpellMaterial}
+                            onChange={(e) => updateModalForm({ itemOnlySpellMaterial: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">Material (M)</span>
+                        </label>
+                        {modalForms.itemOnlySpellMaterial && (
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Material Description</label>
+                            <input
+                              type="text"
+                              value={modalForms.itemOnlySpellMaterialDesc}
+                              onChange={(e) => updateModalForm({ itemOnlySpellMaterialDesc: e.target.value })}
+                              placeholder="e.g., a bit of bat fur"
+                              className="w-full p-2 bg-gray-700 rounded text-white text-sm"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Common fields: Copies and Permanent */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Copies</label>
@@ -8172,13 +8684,43 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => {
-                        const sel = modalForms.magicItemSpellSelect.trim();
-                        const spell = (char.spellsLearned || []).find((x) => x.name === sel);
-                        if (!spell) {
-                          showGameAlert('Add Spell', 'Please select a spell from Spells Learned (or add a new spell first).');
-                          return;
+                        if (modalForms.magicItemSpellMode === 'learned') {
+                          // Add from Spells Learned
+                          const sel = modalForms.magicItemSpellSelect.trim();
+                          const spell = (char.spellsLearned || []).find((x) => x.name === sel);
+                          if (!spell) {
+                            showToast('Please select a spell from Spells Learned', 'error');
+                            return;
+                          }
+                          addSpellEntriesToMagicItem(editModal.itemId, { ...spell }, modalForms.magicItemSpellCopies, modalForms.magicItemSpellPermanent);
+                        } else {
+                          // Add item-only spell with full details
+                          const name = modalForms.itemOnlySpellName.trim();
+                          if (!name) {
+                            showToast('Please enter a spell name', 'error');
+                            return;
+                          }
+                          const itemOnlySpell = {
+                            id: `itemonly-${Date.now()}`,
+                            name,
+                            level: modalForms.itemOnlySpellLevel,
+                            description: modalForms.itemOnlySpellDescription,
+                            prepTime: modalForms.itemOnlySpellPrepTime,
+                            range: modalForms.itemOnlySpellRange,
+                            duration: modalForms.itemOnlySpellDuration,
+                            aoe: modalForms.itemOnlySpellAoe,
+                            savingThrow: modalForms.itemOnlySpellSavingThrow,
+                            spellResistance: modalForms.itemOnlySpellResistance,
+                            hasDiceRoll: modalForms.itemOnlySpellHasDice,
+                            diceType: modalForms.itemOnlySpellDiceType,
+                            verbal: modalForms.itemOnlySpellVerbal,
+                            somatic: modalForms.itemOnlySpellSomatic,
+                            material: modalForms.itemOnlySpellMaterial,
+                            materialDesc: modalForms.itemOnlySpellMaterialDesc,
+                            isItemOnly: true, // Mark as item-only
+                          };
+                          addSpellEntriesToMagicItem(editModal.itemId, itemOnlySpell, modalForms.magicItemSpellCopies, modalForms.magicItemSpellPermanent);
                         }
-                        addSpellEntriesToMagicItem(editModal.itemId, { ...spell }, modalForms.magicItemSpellCopies, modalForms.magicItemSpellPermanent);
                         setEditModal(null);
                       }}
                       className="flex-1 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
@@ -9096,16 +9638,17 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
       {toast && (
         <div className="fixed bottom-4 left-4 right-4 z-[70] flex justify-center pointer-events-none">
           <div className={`px-4 py-3 rounded-lg shadow-lg max-w-sm text-center pointer-events-auto ${
-            toast.type === 'error' ? 'bg-red-600' :
-            toast.type === 'success' ? 'bg-green-600' :
-            toast.type === 'warning' ? 'bg-yellow-600' :
-            'bg-blue-600'
+            toast.type === 'error' ? 'bg-red-600 text-white' :
+            toast.type === 'success' ? 'bg-green-600 text-white' :
+            toast.type === 'warning' ? 'bg-yellow-600 text-white' :
+            'bg-blue-600 text-white'
           }`}>
             {toast.message}
           </div>
         </div>
       )}
     </div>
+    </>
   );
 
 }
