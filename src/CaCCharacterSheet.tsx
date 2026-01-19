@@ -2317,10 +2317,18 @@ if (editModal.type === 'acTracking' && char) {
     const newRolls = [];
     for (let i = 0; i < 6; i++) {
       const dice = [rollDice(6), rollDice(6), rollDice(6), rollDice(6)];
-      const sorted = [...dice].sort((a, b) => a - b);
-      const dropped = sorted[0]; // lowest
-      const total = sorted[1] + sorted[2] + sorted[3]; // sum of top 3
-      newRolls.push({ dice, dropped, total });
+      // Find the index of the lowest die (first occurrence only)
+      let minVal = dice[0];
+      let droppedIndex = 0;
+      for (let j = 1; j < 4; j++) {
+        if (dice[j] < minVal) {
+          minVal = dice[j];
+          droppedIndex = j;
+        }
+      }
+      // Sum all dice except the dropped one
+      const total = dice.reduce((sum, d, idx) => idx === droppedIndex ? sum : sum + d, 0);
+      newRolls.push({ dice, droppedIndex, total });
     }
     setAttributeRolls(newRolls);
   };
@@ -6193,7 +6201,7 @@ if (editModal.type === 'acTracking' && char) {
                         <span
                           key={dIdx}
                           className={`w-8 h-8 flex items-center justify-center rounded ${
-                            d === roll.dropped ? 'bg-red-900 text-red-400 line-through' : 'bg-gray-600'
+                            dIdx === roll.droppedIndex ? 'bg-red-900 text-red-400 line-through' : 'bg-gray-600'
                           }`}
                         >
                           {d}
