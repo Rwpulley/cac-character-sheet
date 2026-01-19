@@ -1372,8 +1372,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     name: '',
     description: '',
     quantity: 1,
-    weightPer: 0,
-    ev: 0,
+    weightPer: '',  // Store as string for decimal/negative input
+    ev: '',         // Store as string for decimal/negative input
     worth: 0,
     worthUnit: 'gp',
     acBonus: 0
@@ -1385,7 +1385,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   
   const resetItemForm = useCallback(() => {
     setItemForm({
-      name: '', description: '', quantity: 1, weightPer: 0, ev: 0,
+      name: '', description: '', quantity: 1, weightPer: '', ev: '',
       worth: 0, worthUnit: 'gp', acBonus: 0
     });
   }, []);
@@ -1405,7 +1405,11 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     savingThrow: '',
     spellResistance: false,
     hasDiceRoll: false,
-    diceType: ''
+    diceType: '',
+    verbal: false,
+    somatic: false,
+    material: false,
+    materialDesc: ''
   });
   
   const updateMiSpellForm = useCallback((updates) => {
@@ -1416,7 +1420,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     setMiSpellForm({
       selectedSpellId: '', copies: 1, permanent: false, name: '', level: 0,
       description: '', prepTime: '', duration: '', range: '', aoe: '',
-      savingThrow: '', spellResistance: false, hasDiceRoll: false, diceType: ''
+      savingThrow: '', spellResistance: false, hasDiceRoll: false, diceType: '',
+      verbal: false, somatic: false, material: false, materialDesc: ''
     });
   }, []);
 
@@ -2099,8 +2104,8 @@ setNewEffectMiscToHit(0);
         name: editModal.item?.name || '',
         description: editModal.item?.description || '',
         quantity: Number(editModal.item?.quantity) || 1,
-        weightPer: Number(editModal.item?.weightPer) || 0,
-        ev: Number(editModal.item?.ev) || 0,
+        weightPer: editModal.item?.weightPer != null ? String(editModal.item.weightPer) : '',
+        ev: editModal.item?.ev != null ? String(editModal.item.ev) : '',
         worth: editModal.item?.worthAmount ?? (editModal.item?.worthGP != null ? editModal.item.worthGP : 0),
         worthUnit: editModal.item?.worthUnit || (editModal.item?.worthGP != null ? 'gp' : 'gp'),
         acBonus: Number(editModal.item?.acBonus) || 0
@@ -2287,7 +2292,11 @@ if (editModal.type === 'acTracking' && char) {
         savingThrow: spell.savingThrow || '',
         spellResistance: !!spell.spellResistance,
         hasDiceRoll: !!spell.hasDiceRoll,
-        diceType: spell.diceType || ''
+        diceType: spell.diceType || '',
+        verbal: !!spell.verbal,
+        somatic: !!spell.somatic,
+        material: !!spell.material,
+        materialDesc: spell.materialDesc || ''
       });
     }
   }, [editModal, char]);
@@ -3341,9 +3350,9 @@ if (editModal.type === 'acTracking' && char) {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setEditModal({ type: 'attackInfo' })}
-                  className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 text-sm"
+                  className="p-2 bg-gray-700 rounded hover:bg-gray-600"
                 >
-                  Info
+                  <Info size={16} />
                 </button>
                 <button onClick={() => setEditModal({ type: 'bthBase' })} className="px-3 py-2 bg-purple-600 rounded hover:bg-purple-700 text-sm">
                   BTH
@@ -3925,10 +3934,10 @@ if (editModal.type === 'acTracking' && char) {
   <div className="flex gap-2">
                 <button
                   onClick={() => setEditModal({ type: 'magicInfo' })}
-                  className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 font-semibold"
+                  className="p-2 bg-gray-700 rounded hover:bg-gray-600"
                   title="Magic Help"
                 >
-                  Info
+                  <Info size={16} />
                 </button>
               <button
                 onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); setMagicInventoryView(true); setSelectedMagicItemId(null); }}
@@ -5754,9 +5763,9 @@ if (editModal.type === 'acTracking' && char) {
               <div className="flex gap-2">
                 <button
                   onClick={() => setEditModal({ type: 'inventoryInfo' })}
-                  className="px-4 py-2 bg-gray-700 rounded hover:bg-gray-600 text-base"
+                  className="p-2 bg-gray-700 rounded hover:bg-gray-600"
                 >
-                  Info
+                  <Info size={16} />
                 </button>
                 <button onClick={openNewItemModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
                   + Add Item
@@ -5791,7 +5800,7 @@ if (editModal.type === 'acTracking' && char) {
                               <span className="text-gray-400">×{item.quantity}</span>
                             </div>
                             <div className="text-sm text-gray-400 ml-5">
-                              {totalWeight.toFixed(1)} lb • EV: {item.ev}
+                              {totalWeight.toFixed(2)} lb • EV: {Number(item.ev).toFixed(1)}
                               {item.worthAmount > 0 && ` • ${item.worthAmount} ${(item.worthUnit || 'gp').toUpperCase()}`}
                             </div>
                           </div>
@@ -5915,7 +5924,7 @@ if (editModal.type === 'acTracking' && char) {
 
                               <div className="text-sm text-gray-300">
                                 <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
-                                <span className="font-semibold text-white">{item.weightPer}</span> lb
+                                <span className="font-semibold text-white">{Number(item.weightPer).toFixed(2)}</span> lb
                               </div>
                             </div>
 
@@ -5961,7 +5970,7 @@ if (editModal.type === 'acTracking' && char) {
                     Total Weight: {getTotalWeight().toFixed(2)} lb
                   </div>
                   <div className="font-bold text-lg">
-                    Total EV: {getInventoryTotalEV()} ({getEncumbranceStatusLabel()})
+                    Total EV: {getInventoryTotalEV().toFixed(1)} ({getEncumbranceStatusLabel()})
                   </div>
                 </div>
 
@@ -6517,6 +6526,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <p className="text-sm text-gray-300">
                     By clicking <span className="font-semibold text-white">Ammo</span>, this item can be linked to a ranged weapon in your Attack section. When you roll to attack with a ranged weapon and a specific ammo chosen, that ammo will decrease by 1.
                   </p>
+                  <div className="mt-2 p-3 bg-gray-900 rounded">
+                    <p className="text-sm text-gray-300">
+                      <span className="font-semibold text-yellow-400">Tip: Negative Weight</span> — At times you may obtain a magical item that allows you to carry more than it weighs, such as a Bag of Holding. For example, if a bag weighs 5 lbs but can carry 50 lbs, subtract the carrying capacity from its weight and enter <span className="font-semibold text-white">-45 lbs</span>. This will subtract from the weight of other items in your inventory as if they are being held inside it.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -6583,7 +6597,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           Encumbrance Rating (ER): <span className="text-white font-semibold">{er}</span>
                         </div>
                         <div className="text-sm text-gray-300">
-                          Total EV Carried: <span className="text-white font-semibold">{total}</span> ({status})
+                          Total EV Carried: <span className="text-white font-semibold">{total.toFixed(1)}</span> ({status})
                         </div>
 
                         <div className="mt-2 bg-gray-900/40 p-3 rounded space-y-1 text-sm text-gray-300">
@@ -7838,9 +7852,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">Weight Per Item (lb)</label>
                       <input
                         type="text"
-                        inputMode="decimal"
-                        value={itemForm.weightPer === 0 ? '' : itemForm.weightPer}
-                        onChange={(e) => updateItemForm({ weightPer: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0) })}
+                        inputMode="text"
+                        value={itemForm.weightPer}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // Allow empty, negative sign, digits, and decimal point
+                          if (val === '' || val === '-' || /^-?\d*\.?\d*$/.test(val)) {
+                            updateItemForm({ weightPer: val });
+                          }
+                        }}
                         placeholder="0"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
@@ -7875,9 +7895,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-1">Encumbrance Value (EV)</label>
                   <input
                     type="text"
-                    inputMode="decimal"
-                    value={itemForm.ev === 0 ? '' : itemForm.ev}
-                    onChange={(e) => updateItemForm({ ev: e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0) })}
+                    inputMode="text"
+                    value={itemForm.ev}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      // Allow empty, negative sign, digits, and decimal point
+                      if (val === '' || val === '-' || /^-?\d*\.?\d*$/.test(val)) {
+                        updateItemForm({ ev: val });
+                      }
+                    }}
                     placeholder="0"
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
                   />
@@ -8384,8 +8410,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         name: itemForm.name,
                         description: itemForm.description,
                         quantity: itemForm.quantity,
-                        weightPer: itemForm.weightPer,
-                        ev: itemForm.ev,
+                        weightPer: parseFloat(itemForm.weightPer) || 0,
+                        ev: parseFloat(itemForm.ev) || 0,
                         worthAmount: itemForm.worth || null,
                         worthUnit: itemForm.worthUnit,
                         effects: itemHasEffects ? (Array.isArray(itemEffects) ? itemEffects : []) : [],
@@ -8846,16 +8872,24 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       />
                       <span className="text-sm">Has Dice Roll</span>
                     </label>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Dice Type (e.g., d4, d6, d8)</label>
-                      <input
-                        type="text"
-                        placeholder="e.g., d6"
-                        value={spellForm.diceType}
-                        onChange={(e) => updateSpellForm({ diceType: e.target.value })}
-                        className="w-full p-2 bg-gray-700 rounded text-white text-sm"
-                      />
-                    </div>
+                    {spellForm.hasDiceRoll && (
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Dice Type</label>
+                        <select
+                          value={spellForm.diceType}
+                          onChange={(e) => updateSpellForm({ diceType: e.target.value })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-sm"
+                        >
+                          <option value="">Select dice...</option>
+                          <option value="d3">d3</option>
+                          <option value="d4">d4</option>
+                          <option value="d6">d6</option>
+                          <option value="d8">d8</option>
+                          <option value="d10">d10</option>
+                          <option value="d12">d12</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                   
                   <div className="mb-3 p-3 bg-gray-900 rounded">
@@ -9118,14 +9152,20 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         </label>
                         {modalForms.itemOnlySpellHasDice && (
                           <div>
-                            <label className="block text-xs text-gray-400 mb-1">Dice Type (e.g., d6, 2d8)</label>
-                            <input
-                              type="text"
+                            <label className="block text-xs text-gray-400 mb-1">Dice Type</label>
+                            <select
                               value={modalForms.itemOnlySpellDiceType}
                               onChange={(e) => updateModalForm({ itemOnlySpellDiceType: e.target.value })}
-                              placeholder="e.g., d6"
                               className="w-full p-2 bg-gray-700 rounded text-white text-sm"
-                            />
+                            >
+                              <option value="">Select dice...</option>
+                              <option value="d3">d3</option>
+                              <option value="d4">d4</option>
+                              <option value="d6">d6</option>
+                              <option value="d8">d8</option>
+                              <option value="d10">d10</option>
+                              <option value="d12">d12</option>
+                            </select>
                           </div>
                         )}
                       </div>
@@ -9410,15 +9450,67 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               <span>Has Dice Roll</span>
                             </label>
                           </div>
-                          <div>
-                            <label className="block text-sm text-gray-400 mb-1">Dice Type (e.g. d4, d6)</label>
+                          {miSpellForm.hasDiceRoll && (
+                            <div>
+                              <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
+                              <select
+                                value={miSpellForm.diceType}
+                                onChange={(e) => updateMiSpellForm({ diceType: e.target.value })}
+                                className="w-full p-2 bg-gray-700 rounded text-white"
+                              >
+                                <option value="">Select dice...</option>
+                                <option value="d3">d3</option>
+                                <option value="d4">d4</option>
+                                <option value="d6">d6</option>
+                                <option value="d8">d8</option>
+                                <option value="d10">d10</option>
+                                <option value="d12">d12</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-3 bg-gray-900 rounded space-y-2">
+                          <div className="font-bold text-sm">Components</div>
+                          <label className="flex items-center gap-2">
                             <input
-                              type="text"
-                              value={miSpellForm.diceType}
-                              onChange={(e) => updateMiSpellForm({ diceType: e.target.value })}
-                              className="w-full p-2 bg-gray-700 rounded text-white"
+                              type="checkbox"
+                              checked={miSpellForm.verbal}
+                              onChange={(e) => updateMiSpellForm({ verbal: e.target.checked })}
+                              className="w-4 h-4"
                             />
-                          </div>
+                            <span className="text-sm">Verbal (V)</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={miSpellForm.somatic}
+                              onChange={(e) => updateMiSpellForm({ somatic: e.target.checked })}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">Somatic (S)</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={miSpellForm.material}
+                              onChange={(e) => updateMiSpellForm({ material: e.target.checked })}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">Material (M)</span>
+                          </label>
+                          {miSpellForm.material && (
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Material Description</label>
+                              <input
+                                type="text"
+                                value={miSpellForm.materialDesc}
+                                onChange={(e) => updateMiSpellForm({ materialDesc: e.target.value })}
+                                placeholder="e.g., a bit of bat fur"
+                                className="w-full p-2 bg-gray-700 rounded text-white text-sm"
+                              />
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex gap-2 pt-2">
@@ -9444,6 +9536,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                 spellResistance: miSpellForm.spellResistance,
                                 hasDiceRoll: miSpellForm.hasDiceRoll,
                                 diceType: miSpellForm.diceType,
+                                verbal: miSpellForm.verbal,
+                                somatic: miSpellForm.somatic,
+                                material: miSpellForm.material,
+                                materialDesc: miSpellForm.materialDesc,
                               };
 
                               // 1) update spellsLearned
