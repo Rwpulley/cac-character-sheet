@@ -1,5 +1,233 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import { Plus, Minus, Edit2, X, Trash2, Download, Upload, Info } from 'lucide-react';
+
+// ===== TYPESCRIPT INTERFACES =====
+interface Attribute {
+  rolledScore: number;
+  raceBonus: number;
+  isPrime: boolean;
+  saveModifier: number;
+}
+
+interface Attack {
+  id: number;
+  name: string;
+  weaponMode: 'melee' | 'ranged' | 'finesse';
+  autoMods: boolean;
+  attrMod: number;
+  damageMod: number;
+  usesDamageDice: boolean;
+  numDice: number;
+  dieType: number;
+  magic: number;
+  misc: number;
+  damageMagic: number;
+  damageMisc: number;
+  bth: number;
+  isFavorite: boolean;
+  weaponId?: number;
+  effectIds?: number[];
+}
+
+interface InventoryItem {
+  id: number;
+  name: string;
+  quantity: number;
+  weight: number;
+  worth: number;
+  description: string;
+  isWeapon: boolean;
+  isArmor: boolean;
+  isShield: boolean;
+  isMagicCasting: boolean;
+  isGrimoire: boolean;
+  isAmmo: boolean;
+  hasAttrBonus: boolean;
+  attrBonuses: { attr: string; value: number }[];
+  weaponDamage?: string;
+  weaponType?: string;
+  acBonus?: number;
+  magicCastingDescription?: string;
+  capacity?: number;
+  isWeaponEffect?: boolean;
+  effectToHitBonus?: number;
+  effectDamageBonus?: number;
+  effectDescription?: string;
+}
+
+interface Spell {
+  id: number | string;
+  name: string;
+  level: number;
+  description: string;
+  prepTime: string;
+  range: string;
+  duration: string;
+  aoe?: string;
+  savingThrow?: string;
+  spellResistance?: boolean;
+  hasDiceRoll?: boolean;
+  diceType?: string;
+  verbal?: boolean;
+  somatic?: boolean;
+  material?: boolean;
+  materialDesc?: string;
+  isItemOnly?: boolean;
+}
+
+interface SpellSlot {
+  total: number;
+  used: number;
+}
+
+interface Companion {
+  id: number;
+  name: string;
+  type: string;
+  hp: number;
+  maxHp: number;
+  ac: number;
+  speed: string;
+  abilities: string;
+  attacks: CompanionAttack[];
+}
+
+interface CompanionAttack {
+  id: number;
+  name: string;
+  toHit: number;
+  damage: string;
+  notes: string;
+}
+
+interface MagicItem {
+  id: number;
+  itemId: number;
+  name: string;
+  capacity: number;
+  isGrimoire: boolean;
+  spells: MagicItemSpellEntry[];
+}
+
+interface MagicItemSpellEntry {
+  id: string;
+  spell: Spell;
+  permanent: boolean;
+  usedToday?: boolean;
+}
+
+interface Character {
+  id: number;
+  name: string;
+  race: string;
+  class1: string;
+  class1Level: number;
+  class2?: string;
+  class2Level?: number;
+  hp: number;
+  maxHpBonus: number;
+  hpByLevel: number[];
+  hpDie: number;
+  ac: number;
+  acDexBonus: number;
+  acBonus: number;
+  selectedArmorId: number | null;
+  selectedShieldId: number | null;
+  speed: number;
+  speedBonus: number;
+  baseBth: number;
+  currentXp: number;
+  xpTable: number[];
+  primeSaveBonus: number;
+  attackBonus: number;
+  damageBonus: number;
+  attributes: Record<string, Attribute>;
+  attacks: Attack[];
+  inventory: InventoryItem[];
+  spellsLearned: Spell[];
+  spellSlots: Record<number, SpellSlot>;
+  spellsPrepared: { id: string; spell: Spell }[];
+  magicItems: MagicItem[];
+  companions: Companion[];
+  notes: string;
+  classAbilities: string;
+  raceAbilities: string;
+  advantages: string;
+  holySymbol: string;
+  age?: string;
+  height?: string;
+  weight?: string;
+  description?: string;
+  backstory?: string;
+  wallet?: {
+    platinum: number;
+    gold: number;
+    electrum: number;
+    silver: number;
+    copper: number;
+  };
+}
+
+interface StorageData {
+  version: number;
+  savedAt: string;
+  characters: Character[];
+}
+
+// ===== ERROR BOUNDARY =====
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('Character Sheet Error:', error, errorInfo);
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full text-center">
+            <h2 className="text-2xl font-bold text-red-400 mb-4">Something went wrong</h2>
+            <p className="text-gray-300 mb-4">
+              The app encountered an error. Your data is safe in local storage.
+            </p>
+            <p className="text-sm text-gray-500 mb-4 font-mono bg-gray-900 p-2 rounded overflow-auto max-h-32">
+              {this.state.error?.message || 'Unknown error'}
+            </p>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                window.location.reload();
+              }}
+              className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+            >
+              Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+// ===== END ERROR BOUNDARY =====
 
 // Light theme CSS overrides
 const lightThemeStyles = `
@@ -683,6 +911,14 @@ const createNewCharacter = () => ({
 });
 
 export default function CaCCharacterSheet() {
+  return (
+    <ErrorBoundary>
+      <CaCCharacterSheetInner />
+    </ErrorBoundary>
+  );
+}
+
+function CaCCharacterSheetInner() {
   const [characters, setCharacters] = useState([]);
   const [currentCharIndex, setCurrentCharIndex] = useState(null);
   const [activeTab, setActiveTab] = useState('main');
