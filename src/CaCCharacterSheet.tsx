@@ -1713,6 +1713,15 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     if (editModal.type === 'name' && char) {
       updateModalForm({ name: char.name || '' });
     }
+    if (editModal.type === 'characterDetails' && char) {
+      updateModalForm({
+        charAge: char.age || '',
+        charHeight: char.height || '',
+        charWeight: char.weight || '',
+        charDescription: char.description || '',
+        charBackstory: char.backstory || '',
+      });
+    }
     if (editModal.type === 'class' && char) {
       updateModalForm({ class: char.class1 || '' });
     }
@@ -3019,6 +3028,58 @@ if (editModal.type === 'acTracking' && char) {
         placeholder="e.g., Silver hammer"
       />
     </div>
+  </div>
+</div>
+
+{/* Character Details Section */}
+<div className="bg-gray-800 rounded-lg p-4">
+  <div className="flex items-center justify-between mb-3">
+    <h2 className="text-xl font-bold">Details</h2>
+    <button
+      onClick={() => setEditModal({ type: 'characterDetails' })}
+      className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+    >
+      <Edit2 size={16} />
+    </button>
+  </div>
+  
+  <div className="space-y-3">
+    {/* Age, Height, Weight on same line */}
+    <div className="flex gap-4 text-sm">
+      <div>
+        <span className="text-gray-400">Age:</span>{' '}
+        <span>{char.age || '—'}</span>
+      </div>
+      <div>
+        <span className="text-gray-400">Height:</span>{' '}
+        <span>{char.height || '—'}</span>
+      </div>
+      <div>
+        <span className="text-gray-400">Weight:</span>{' '}
+        <span>{char.weight || '—'}</span>
+      </div>
+    </div>
+    
+    {/* Description */}
+    {char.description && (
+      <div>
+        <div className="text-sm text-gray-400 mb-1">Description</div>
+        <div className="text-sm whitespace-pre-wrap">{char.description}</div>
+      </div>
+    )}
+    
+    {/* Backstory */}
+    {char.backstory && (
+      <div>
+        <div className="text-sm text-gray-400 mb-1">Backstory</div>
+        <div className="text-sm whitespace-pre-wrap">{char.backstory}</div>
+      </div>
+    )}
+    
+    {/* Show placeholder if nothing filled in */}
+    {!char.age && !char.height && !char.weight && !char.description && !char.backstory && (
+      <div className="text-gray-500 text-sm italic">No details added yet. Click edit to add.</div>
+    )}
   </div>
 </div>
 
@@ -5810,6 +5871,7 @@ if (editModal.type === 'acTracking' && char) {
               <h3 className="text-xl font-bold">
                 {editModal.type === 'race' && 'Edit Race'}
                 {editModal.type === 'name' && 'Edit Name'}
+                {editModal.type === 'characterDetails' && 'Edit Details'}
                 {editModal.type === 'class' && 'Edit Class'}
                 {editModal.type === 'speed' && 'Edit Speed'}
                 {editModal.type === 'hp' && 'Edit Current HP'}
@@ -6341,6 +6403,79 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+
+              {editModal.type === 'characterDetails' && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Age</label>
+                      <input
+                        type="text"
+                        value={modalForms.charAge || ''}
+                        onChange={(e) => updateModalForm({ charAge: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="e.g., 25"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Height</label>
+                      <input
+                        type="text"
+                        value={modalForms.charHeight || ''}
+                        onChange={(e) => updateModalForm({ charHeight: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="e.g., 5ft 10in"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Weight</label>
+                      <input
+                        type="text"
+                        value={modalForms.charWeight || ''}
+                        onChange={(e) => updateModalForm({ charWeight: e.target.value })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="e.g., 180 lbs"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Description</label>
+                    <textarea
+                      value={modalForms.charDescription || ''}
+                      onChange={(e) => updateModalForm({ charDescription: e.target.value })}
+                      className="w-full p-2 bg-gray-700 rounded text-white h-24"
+                      placeholder="Physical appearance, mannerisms, etc."
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Backstory</label>
+                    <textarea
+                      value={modalForms.charBackstory || ''}
+                      onChange={(e) => updateModalForm({ charBackstory: e.target.value })}
+                      className="w-full p-2 bg-gray-700 rounded text-white h-32"
+                      placeholder="Character history, motivations, goals..."
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      updateChar({
+                        age: modalForms.charAge,
+                        height: modalForms.charHeight,
+                        weight: modalForms.charWeight,
+                        description: modalForms.charDescription,
+                        backstory: modalForms.charBackstory,
+                      });
+                      setEditModal(null);
+                    }}
+                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
                   >
                     Save
                   </button>
