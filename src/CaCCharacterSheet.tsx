@@ -2754,6 +2754,7 @@ if (editModal.type === 'acTracking' && char) {
   // Swipe navigation handlers (must be before conditional returns to follow hooks rules)
   const touchStartRef = useRef({ x: 0, y: 0 });
   const touchEndRef = useRef({ x: 0, y: 0 });
+  const tabButtonRefs = useRef({});
   
   const handleTouchStart = useCallback((e) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -2773,12 +2774,20 @@ if (editModal.type === 'acTracking' && char) {
     // Only trigger if horizontal swipe is greater than vertical (to not interfere with scrolling)
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > minSwipeDistance) {
       const currentIndex = tabs.indexOf(activeTab);
+      let newTab = null;
       if (deltaX < 0 && currentIndex < tabs.length - 1) {
         // Swipe left - go to next tab
-        setActiveTab(tabs[currentIndex + 1]);
+        newTab = tabs[currentIndex + 1];
       } else if (deltaX > 0 && currentIndex > 0) {
         // Swipe right - go to previous tab
-        setActiveTab(tabs[currentIndex - 1]);
+        newTab = tabs[currentIndex - 1];
+      }
+      if (newTab) {
+        setActiveTab(newTab);
+        // Scroll the tab button into view
+        setTimeout(() => {
+          tabButtonRefs.current[newTab]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }, 10);
       }
     }
   }, [activeTab]);
@@ -2974,20 +2983,12 @@ if (editModal.type === 'acTracking' && char) {
           ].map(({ id, label }) => (
             <button
               key={id}
+              ref={(el) => { tabButtonRefs.current[id] = el; }}
               onClick={() => setActiveTab(id)}
               className={`px-4 py-2 rounded whitespace-nowrap ${activeTab === id ? 'bg-blue-600' : 'bg-gray-700'}`}
             >
               {label}
             </button>
-          ))}
-        </div>
-        {/* Swipe indicator dots */}
-        <div className="flex justify-center mt-1 gap-1">
-          {['main', 'attack', 'saves', 'inventory', 'magic', 'dice', 'companion', 'notes'].map((tab) => (
-            <div 
-              key={tab}
-              className={`w-2 h-2 rounded-full transition-colors ${activeTab === tab ? 'bg-blue-500' : 'bg-gray-600'}`}
-            />
           ))}
         </div>
       </div>
