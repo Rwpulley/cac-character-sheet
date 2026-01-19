@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { Plus, Minus, Edit2, X, Trash2, Download, Upload } from 'lucide-react';
+import { Plus, Minus, Edit2, X, Trash2, Download, Upload, Info } from 'lucide-react';
 
 // Light theme CSS overrides
 const lightThemeStyles = `
@@ -2729,6 +2729,12 @@ if (editModal.type === 'acTracking' && char) {
               <button onClick={openNameModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
                 <Edit2 size={16} />
               </button>
+              <button 
+                onClick={() => setEditModal({ type: 'mainTabInfo' })}
+                className="p-2 bg-gray-700 rounded hover:bg-gray-600 ml-auto"
+              >
+                <Info size={16} />
+              </button>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
@@ -3573,7 +3579,15 @@ if (editModal.type === 'acTracking' && char) {
 
         {activeTab === 'saves' && (
           <div className="space-y-4">
-            <h2 className="text-2xl font-bold">Checks and Saving Throws</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Checks and Saving Throws</h2>
+              <button 
+                onClick={() => setEditModal({ type: 'savesTabInfo' })}
+                className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+              >
+                <Info size={16} />
+              </button>
+            </div>
 
             <div className="space-y-3">
 
@@ -5869,6 +5883,8 @@ if (editModal.type === 'acTracking' && char) {
           >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold">
+                {editModal.type === 'mainTabInfo' && 'Main Tab Info'}
+                {editModal.type === 'savesTabInfo' && 'Checks & Saves Info'}
                 {editModal.type === 'race' && 'Edit Race'}
                 {editModal.type === 'name' && 'Edit Name'}
                 {editModal.type === 'characterDetails' && 'Edit Details'}
@@ -6262,6 +6278,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <p className="text-sm text-gray-300">
                     By clicking <span className="font-semibold text-white">Weapon Effects</span>, you can create an item that can be applied to a weapon to boost its To Hit or Damage.
                   </p>
+                  <p className="text-sm text-gray-300">
+                    By clicking <span className="font-semibold text-white">Ammo</span>, this item can be linked to a ranged weapon in your Attack section. When you roll to attack with a ranged weapon and a specific ammo chosen, that ammo will decrease by 1.
+                  </p>
                 </div>
               )}
 
@@ -6363,6 +6382,94 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
                   >
                     OK
+                  </button>
+                </div>
+              )}
+
+              {editModal.type === 'mainTabInfo' && (
+                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                  <p className="text-gray-300">
+                    This is your <span className="font-bold text-white">Main Character Screen</span>. Here you can add your name, race, class, and everything else that describes your character.
+                  </p>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">HP Tracking</h4>
+                    <p className="text-sm text-gray-300">
+                      Track your HP for each level. You can manually enter what you rolled on physical dice, or choose the correct die type and let the app roll and add your CON modifier automatically.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">AC Tracking</h4>
+                    <p className="text-sm text-gray-300">
+                      Edit your base AC as well as add your DEX modifier and any other abilities or items that boost it. To add armor or a shield to your AC, first add those items to your Inventory, then return here to select them in AC Tracking.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Experience Tracking</h4>
+                    <p className="text-sm text-gray-300">
+                      Using the Player's Handbook or Adventurer's Backpack, enter the XP needed for each level in "Level XP". As you gain XP throughout the campaign, the app will track your progress automatically.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Attributes</h4>
+                    <p className="text-sm text-gray-300">
+                      Enter your rolled attribute scores. You can also designate an attribute as a Prime, which provides bonuses to related checks and saves.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Class Abilities</h4>
+                    <p className="text-sm text-gray-300">
+                      Notes you can add to track what your class can do—special abilities, features, and class-specific rules.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Race Abilities</h4>
+                    <p className="text-sm text-gray-300">
+                      Similar to Class Abilities, but for racial traits. Here you can also add or subtract bonuses to your Attributes or AC based on your race.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Advantages</h4>
+                    <p className="text-sm text-gray-300">
+                      Track Advantages from the Castle Keeper's Guide, such as Fleet of Foot, Sacrificing Riposte, or other special abilities your character has gained.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Details Section</h4>
+                    <p className="text-sm text-gray-300">
+                      Everything below Advantages describes your character—age, height, weight, physical description, and backstory.
+                    </p>
+                  </div>
+                  
+                  <button
+                    onClick={() => setEditModal(null)}
+                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-2"
+                  >
+                    Got It
+                  </button>
+                </div>
+              )}
+
+              {editModal.type === 'savesTabInfo' && (
+                <div className="space-y-4">
+                  <p className="text-gray-300">
+                    This app uses the <span className="font-bold text-white">Prime as a +6</span> bonus to an attribute instead of the 12/18 rule found in the Castle Keeper's Guide.
+                  </p>
+                  <p className="text-gray-300 text-sm">
+                    When you designate an attribute as a Prime (on the Main tab), it will automatically add +6 to your checks and saving throws for that attribute.
+                  </p>
+                  <button
+                    onClick={() => setEditModal(null)}
+                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-2"
+                  >
+                    Got It
                   </button>
                 </div>
               )}
