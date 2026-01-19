@@ -2582,8 +2582,8 @@ if (editModal.type === 'acTracking' && char) {
     const updated = magicItems.map((i) => (i.id === itemId ? { ...i, spells: entries } : i));
     updateChar({ magicItems: updated });
   };
-  const setMagicItemSpellNumDice = (itemId, spellName, permanent, numDice) => {
-    const n = Math.max(1, Math.min(99, Number(numDice) || 1));
+  const setMagicItemSpellNumDice = (itemId, spellName, permanent, numDice, shouldClamp = false) => {
+    const n = shouldClamp ? Math.max(1, Math.min(99, parseInt(numDice) || 1)) : (numDice === '' ? '' : (parseInt(numDice) || 1));
     updateChar({
       magicItems: (char.magicItems || []).map((it) => {
         if (it.id !== itemId) return it;
@@ -3630,10 +3630,10 @@ if (editModal.type === 'acTracking' && char) {
                               <div className="flex gap-1 mt-1">
                                 <input
                                   type="text" inputMode="numeric"
-                                  placeholder="Enter roll (1-20)"
+                                  placeholder="1-20"
                                   value={rollModal.manualRoll || ''}
                                   onChange={(e) => setRollModal({ ...rollModal, manualRoll: e.target.value })}
-                                  className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                  className="w-16 p-1 bg-gray-800 rounded text-white text-sm text-center"
                                 />
                                 <button
                                   onClick={() => {
@@ -3750,10 +3750,10 @@ if (editModal.type === 'acTracking' && char) {
                                   <div className="flex gap-1 mt-1">
                                     <input
                                       type="text" inputMode="numeric"
-                                      placeholder="Enter d4 (1-4)"
+                                      placeholder="1-4"
                                       value={rollModal.critD4 || ''}
                                       onChange={(e) => setRollModal({ ...rollModal, critD4: e.target.value })}
-                                      className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                      className="w-16 p-1 bg-gray-800 rounded text-white text-sm text-center"
                                     />
                                     <button
                                       onClick={() => {
@@ -3818,10 +3818,10 @@ if (editModal.type === 'acTracking' && char) {
                                   <div className="flex gap-1 mt-1">
                                     <input
                                       type="text" inputMode="numeric"
-                                      placeholder="Enter total dice roll"
+                                      placeholder="Dice total"
                                       value={rollModal.manualDamage || ''}
                                       onChange={(e) => setRollModal({ ...rollModal, manualDamage: e.target.value })}
-                                      className="flex-1 p-1 bg-gray-800 rounded text-white text-sm"
+                                      className="w-20 p-1 bg-gray-800 rounded text-white text-sm text-center"
                                     />
                                     <button
                                       onClick={() => {
@@ -4073,11 +4073,11 @@ if (editModal.type === 'acTracking' && char) {
                     <div className="space-y-2">
                       {Object.values(spellGroups).map(({ spell, count, prepIds }) => (
                         <div key={spell.id} className="bg-gray-800 p-3 rounded">
-                          <div className="flex items-center justify-between mb-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <div className="font-bold text-lg">
+                              {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
+                            </div>
                             <div className="flex items-center gap-2">
-                              <div className="font-bold text-lg">
-                                {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
-                              </div>
                               <label className="flex items-center gap-1">
                                 <input
                                   type="checkbox"
@@ -4091,19 +4091,19 @@ if (editModal.type === 'acTracking' && char) {
                                   }}
                                   className="w-4 h-4"
                                 />
-                                <span className="text-xs bg-purple-600 px-2 py-1 rounded">Concentrating</span>
+                                <span className="text-xs bg-purple-600 px-2 py-1 rounded">Conc</span>
                               </label>
+                              <button
+                                onClick={() => {
+                                  updateChar({ 
+                                    spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== prepIds[0])
+                                  });
+                                }}
+                                className="px-3 py-1 text-sm bg-red-600 rounded hover:bg-red-700 font-bold"
+                              >
+                                Cast
+                              </button>
                             </div>
-                            <button
-                              onClick={() => {
-                                updateChar({ 
-                                  spellsPrepared: char.spellsPrepared.filter(s => s.prepId !== prepIds[0])
-                                });
-                              }}
-                              className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 font-bold"
-                                >
-                                  Cast
-                            </button>
                           </div>
                           
                           <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
@@ -4134,10 +4134,18 @@ if (editModal.type === 'acTracking' && char) {
                                 <input
                                   type="text" inputMode="numeric"
                                   min="1"
-                                  value={char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}
+                                  value={char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice ?? ''}
                                   onChange={(e) => {
+                                    const val = e.target.value;
                                     const newPrepared = char.spellsPrepared.map(s => 
-                                      s.prepId === prepIds[0] ? { ...s, numDice: parseInt(e.target.value) || 1 } : s
+                                      s.prepId === prepIds[0] ? { ...s, numDice: val === '' ? '' : (parseInt(val) || 1) } : s
+                                    );
+                                    updateChar({ spellsPrepared: newPrepared });
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = parseInt(e.target.value) || 1;
+                                    const newPrepared = char.spellsPrepared.map(s => 
+                                      s.prepId === prepIds[0] ? { ...s, numDice: Math.max(1, val) } : s
                                     );
                                     updateChar({ spellsPrepared: newPrepared });
                                   }}
@@ -4438,9 +4446,21 @@ if (editModal.type === 'acTracking' && char) {
                                   <input
                                     type="text" inputMode="numeric"
                                     min="1"
-                                    value={(grimoire.entries || []).find(e => e.instanceId === group.entryIds[0])?.numDice || 1}
+                                    value={(grimoire.entries || []).find(e => e.instanceId === group.entryIds[0])?.numDice ?? ''}
                                     onChange={(e) => {
-                                      const val = parseInt(e.target.value) || 1;
+                                      const val = e.target.value;
+                                      const newGrimoires = (char.grimoires || []).map(g => {
+                                        if (g.id !== grimoire.id) return g;
+                                        const newEntries = (g.entries || []).map(en => {
+                                          if (group.entryIds.includes(en.instanceId)) return { ...en, numDice: val === '' ? '' : (parseInt(val) || 1) };
+                                          return en;
+                                        });
+                                        return { ...g, entries: newEntries };
+                                      });
+                                      updateChar({ grimoires: newGrimoires });
+                                    }}
+                                    onBlur={(e) => {
+                                      const val = Math.max(1, parseInt(e.target.value) || 1);
                                       const newGrimoires = (char.grimoires || []).map(g => {
                                         if (g.id !== grimoire.id) return g;
                                         const newEntries = (g.entries || []).map(en => {
@@ -4714,8 +4734,9 @@ if (editModal.type === 'acTracking' && char) {
                                             <input
                                               type="text" inputMode="numeric"
                                               min="1"
-                                              value={Number(g.entries?.[0]?.numDice || 1)}
-                                              onChange={(e) => setMagicItemSpellNumDice(item.id, s.name, g.permanent, e.target.value)}
+                                              value={g.entries?.[0]?.numDice ?? ''}
+                                              onChange={(e) => setMagicItemSpellNumDice(item.id, s.name, g.permanent, e.target.value, false)}
+                                              onBlur={(e) => setMagicItemSpellNumDice(item.id, s.name, g.permanent, e.target.value, true)}
                                               className="w-16 p-1 bg-gray-700 rounded text-white text-center"
                                             />
                                             <span className="text-sm">{s.diceType}</span>
