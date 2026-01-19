@@ -925,6 +925,11 @@ function CaCCharacterSheetInner() {
   const [editModal, setEditModal] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Attribute roller state
+  const [attributeRollerOpen, setAttributeRollerOpen] = useState(false);
+  const [attributeRolls, setAttributeRolls] = useState([]); // Array of 6 rolls, each roll is { dice: [4 numbers], dropped: number, total: number }
+  const [showRolledAttributes, setShowRolledAttributes] = useState(false);
+  
   // Theme state - persisted to localStorage
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -2307,6 +2312,19 @@ if (editModal.type === 'acTracking' && char) {
 
   const rollDice = (sides) => Math.floor(Math.random() * sides) + 1;
 
+  // Roll 4d6 drop lowest for attribute generation
+  const rollAttributeSet = () => {
+    const newRolls = [];
+    for (let i = 0; i < 6; i++) {
+      const dice = [rollDice(6), rollDice(6), rollDice(6), rollDice(6)];
+      const sorted = [...dice].sort((a, b) => a - b);
+      const dropped = sorted[0]; // lowest
+      const total = sorted[1] + sorted[2] + sorted[3]; // sum of top 3
+      newRolls.push({ dice, dropped, total });
+    }
+    setAttributeRolls(newRolls);
+  };
+
   const sortSpellsLevelName = (a, b) => {
     const la = a?.level ?? 0;
     const lb = b?.level ?? 0;
@@ -3087,7 +3105,31 @@ if (editModal.type === 'acTracking' && char) {
             </div>
 
             <div>
-              <h3 className="text-xl font-bold mb-2">Attributes</h3>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xl font-bold">Attributes</h3>
+                <button
+                  onClick={() => setAttributeRollerOpen(true)}
+                  className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+                  title="Roll Attributes"
+                >
+                  🎲
+                </button>
+              </div>
+              
+              {/* Display rolled attribute totals */}
+              {showRolledAttributes && attributeRolls.length === 6 && (
+                <div className="bg-yellow-900/50 border border-yellow-600 rounded p-3 mb-3">
+                  <div className="text-sm text-yellow-300 mb-1">Rolled Attributes:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {attributeRolls.map((roll, idx) => (
+                      <span key={idx} className="bg-yellow-700 px-3 py-1 rounded font-bold text-lg">
+                        {roll.total}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {Object.entries(char.attributes).map(([key, attr]) => {
                   const rolled = getAttributeRolled(key);
@@ -6119,6 +6161,102 @@ if (editModal.type === 'acTracking' && char) {
         </div>
       )}
 
+      {/* Attribute Roller Modal */}
+      {attributeRollerOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg p-4 sm:p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Roll Attributes</h3>
+              <button
+                onClick={() => setAttributeRollerOpen(false)}
+                className="p-2 hover:bg-gray-700 rounded"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <p className="text-sm text-gray-400 mb-4">
+              Roll 4d6, drop the lowest die, and sum the remaining three for each attribute.
+            </p>
+            
+            <div className="space-y-2 mb-4">
+              {attributeRolls.length === 0 ? (
+                <div className="text-gray-500 text-center py-8">
+                  Click "Roll Attributes" to generate 6 attribute scores
+                </div>
+              ) : (
+                attributeRolls.map((roll, idx) => (
+                  <div key={idx} className="flex items-center gap-3 bg-gray-700 p-2 rounded">
+                    <span className="text-gray-400 w-16">Roll {idx + 1}:</span>
+                    <div className="flex gap-1">
+                      {roll.dice.map((d, dIdx) => (
+                        <span
+                          key={dIdx}
+                          className={`w-8 h-8 flex items-center justify-center rounded ${
+                            d === roll.dropped ? 'bg-red-900 text-red-400 line-through' : 'bg-gray-600'
+                          }`}
+                        >
+                          {d}
+                        </span>
+                      ))}
+                    </div>
+                    <span className="text-gray-400">=</span>
+                    <span className="font-bold text-xl text-green-400 w-8">{roll.total}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            {attributeRolls.length === 6 && (
+              <div className="bg-gray-900 p-3 rounded mb-4">
+                <div className="text-sm text-gray-400 mb-1">Totals:</div>
+                <div className="flex flex-wrap gap-2">
+                  {attributeRolls.map((roll, idx) => (
+                    <span key={idx} className="bg-green-700 px-3 py-1 rounded font-bold text-lg">
+                      {roll.total}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex gap-2">
+              <button
+                onClick={rollAttributeSet}
+                className="flex-1 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+              >
+                Roll Attributes
+              </button>
+              <button
+                onClick={() => {
+                  if (attributeRolls.length === 6) {
+                    setShowRolledAttributes(true);
+                    setAttributeRollerOpen(false);
+                  }
+                }}
+                disabled={attributeRolls.length !== 6}
+                className={`flex-1 py-2 rounded font-semibold ${
+                  attributeRolls.length === 6 
+                    ? 'bg-green-600 hover:bg-green-700' 
+                    : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Show
+              </button>
+              <button
+                onClick={() => {
+                  setAttributeRolls([]);
+                  setShowRolledAttributes(false);
+                }}
+                className="flex-1 py-2 bg-gray-600 rounded hover:bg-gray-500 font-semibold"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 {editModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4 z-50">
           <div
@@ -6666,7 +6804,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div>
                     <h4 className="font-bold text-blue-400 mb-1">Attributes</h4>
                     <p className="text-sm text-gray-300">
-                      Enter your rolled attribute scores. You can also designate an attribute as a Prime, which provides bonuses to related checks and saves.
+                      Enter your rolled attribute scores manually, or click the 🎲 button near the Attributes title to roll them automatically. After rolling, click <span className="font-semibold text-white">Show</span> to display your rolled numbers so you can decide which score goes where. Once you've assigned them, click the 🎲 button again and select <span className="font-semibold text-white">Clear</span> to hide the rolled values. You can also designate an attribute as a Prime, which provides bonuses to related checks and saves.
                     </p>
                   </div>
                   
