@@ -3424,6 +3424,35 @@ if (editModal.type === 'acTracking' && char) {
               </div>
             </div>
 
+            {/* Initiative Roller */}
+            <div className="bg-gray-700 p-3 rounded flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold">🎲 Initiative</span>
+                {char.initiativeRoll != null && (
+                  <span className="text-xl font-bold text-yellow-400">{char.initiativeRoll}</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const roll = rollDice(10);
+                    updateChar({ initiativeRoll: roll });
+                  }}
+                  className="px-3 py-1 bg-blue-600 rounded hover:bg-blue-700 text-sm font-bold"
+                >
+                  Roll d10
+                </button>
+                {char.initiativeRoll != null && (
+                  <button
+                    onClick={() => updateChar({ initiativeRoll: null })}
+                    className="px-2 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
             {(char.attackBonus !== 0 || char.damageBonus !== 0) && (
               <div className="bg-purple-900 p-3 rounded text-sm">
                 <div className="font-bold mb-1">Active Bonuses:</div>
