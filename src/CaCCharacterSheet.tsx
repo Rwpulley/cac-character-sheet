@@ -3294,57 +3294,8 @@ if (editModal.type === 'acTracking' && char) {
   )}
 </div>
 
-{/* Alignment / Languages / Deity */}
-<div className="mt-6 space-y-4">
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div>
-      <label className="block text-sm text-gray-400 mb-1">Alignment</label>
-      <DebouncedInput
-        type="text"
-        value={char.alignment || ''}
-        onChange={(value) => updateChar({ alignment: value })}
-        className="w-full p-2 bg-gray-700 rounded text-white"
-        placeholder="e.g., Lawful Good"
-      />
-    </div>
-
-    <div>
-      <label className="block text-sm text-gray-400 mb-1">Languages</label>
-      <DebouncedInput
-        type="text"
-        value={char.languages || ''}
-        onChange={(value) => updateChar({ languages: value })}
-        className="w-full p-2 bg-gray-700 rounded text-white"
-        placeholder="e.g., Common, Elvish"
-      />
-    </div>
-
-    <div>
-      <label className="block text-sm text-gray-400 mb-1">Deity</label>
-      <DebouncedInput
-        type="text"
-        value={char.deity || ''}
-        onChange={(value) => updateChar({ deity: value })}
-        className="w-full p-2 bg-gray-700 rounded text-white"
-        placeholder="e.g., Odin"
-      />
-    </div>
-
-    <div>
-      <label className="block text-sm text-gray-400 mb-1">Holy Symbol</label>
-      <DebouncedInput
-        type="text"
-        value={char.holySymbol || ''}
-        onChange={(value) => updateChar({ holySymbol: value })}
-        className="w-full p-2 bg-gray-700 rounded text-white"
-        placeholder="e.g., Silver hammer"
-      />
-    </div>
-  </div>
-</div>
-
 {/* Character Details Section */}
-<div className="bg-gray-800 rounded-lg p-4">
+<div className="mt-6 bg-gray-800 rounded-lg p-4">
   <div className="flex items-center justify-between mb-3">
     <h2 className="text-xl font-bold">Details</h2>
     <button
@@ -3392,6 +3343,55 @@ if (editModal.type === 'acTracking' && char) {
     {!char.age && !char.height && !char.weight && !char.description && !char.backstory && (
       <div className="text-gray-500 text-sm italic">No details added yet. Click edit to add.</div>
     )}
+  </div>
+</div>
+
+{/* Alignment / Languages / Deity */}
+<div className="mt-6 space-y-4">
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label className="block text-sm text-gray-400 mb-1">Alignment</label>
+      <DebouncedInput
+        type="text"
+        value={char.alignment || ''}
+        onChange={(value) => updateChar({ alignment: value })}
+        className="w-full p-2 bg-gray-700 rounded text-white"
+        placeholder="e.g., Lawful Good"
+      />
+    </div>
+
+    <div>
+      <label className="block text-sm text-gray-400 mb-1">Languages</label>
+      <DebouncedInput
+        type="text"
+        value={char.languages || ''}
+        onChange={(value) => updateChar({ languages: value })}
+        className="w-full p-2 bg-gray-700 rounded text-white"
+        placeholder="e.g., Common, Elvish"
+      />
+    </div>
+
+    <div>
+      <label className="block text-sm text-gray-400 mb-1">Deity</label>
+      <DebouncedInput
+        type="text"
+        value={char.deity || ''}
+        onChange={(value) => updateChar({ deity: value })}
+        className="w-full p-2 bg-gray-700 rounded text-white"
+        placeholder="e.g., Odin"
+      />
+    </div>
+
+    <div>
+      <label className="block text-sm text-gray-400 mb-1">Holy Symbol</label>
+      <DebouncedInput
+        type="text"
+        value={char.holySymbol || ''}
+        onChange={(value) => updateChar({ holySymbol: value })}
+        className="w-full p-2 bg-gray-700 rounded text-white"
+        placeholder="e.g., Silver hammer"
+      />
+    </div>
   </div>
 </div>
 
@@ -6881,9 +6881,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
                   
                   <div>
-                    <h4 className="font-bold text-blue-400 mb-1">Details Section</h4>
+                    <h4 className="font-bold text-blue-400 mb-1">Details</h4>
                     <p className="text-sm text-gray-300">
-                      Everything below Advantages describes your character—age, height, weight, physical description, and backstory.
+                      Your character's age, height, weight, physical description, and backstory.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Alignment, Languages, Deity & Holy Symbol</h4>
+                    <p className="text-sm text-gray-300">
+                      Additional character information at the bottom of the Main tab.
                     </p>
                   </div>
                   
