@@ -2776,7 +2776,7 @@ if (editModal.type === 'acTracking' && char) {
       return;
     }
     
-    const tabs = ['main', 'attack', 'saves', 'inventory', 'magic', 'dice', 'companion', 'notes'];
+    const tabs = ['main', 'attack', 'inventory', 'magic', 'saves', 'dice', 'companion', 'notes'];
     const deltaX = touchEndRef.current.x - touchStartRef.current.x;
     const deltaY = touchEndRef.current.y - touchStartRef.current.y;
     const minSwipeDistance = 50;
@@ -2984,9 +2984,9 @@ if (editModal.type === 'acTracking' && char) {
           {[
             { id: 'main', label: 'Main' },
             { id: 'attack', label: 'Attack' },
-            { id: 'saves', label: 'Checks/Saves' },
             { id: 'inventory', label: 'Inventory' },
             { id: 'magic', label: 'Magic' },
+            { id: 'saves', label: 'Checks/Saves' },
             { id: 'dice', label: 'Dice' },
             { id: 'companion', label: 'Companion' },
             { id: 'notes', label: 'Notes' }
