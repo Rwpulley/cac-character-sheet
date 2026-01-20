@@ -2755,10 +2755,14 @@ if (editModal.type === 'acTracking' && char) {
   const touchStartRef = useRef({ x: 0, y: 0 });
   const touchEndRef = useRef({ x: 0, y: 0 });
   const tabButtonRefs = useRef({});
+  const tabBarRef = useRef(null);
+  const touchStartedInTabBar = useRef(false);
   
   const handleTouchStart = useCallback((e) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     touchEndRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    // Check if touch started in the tab bar
+    touchStartedInTabBar.current = tabBarRef.current?.contains(e.target) || false;
   }, []);
   
   const handleTouchMove = useCallback((e) => {
@@ -2766,6 +2770,12 @@ if (editModal.type === 'acTracking' && char) {
   }, []);
   
   const handleTouchEnd = useCallback(() => {
+    // Skip swipe navigation if touch started in tab bar (let user scroll tabs)
+    if (touchStartedInTabBar.current) {
+      touchStartedInTabBar.current = false;
+      return;
+    }
+    
     const tabs = ['main', 'attack', 'saves', 'inventory', 'magic', 'dice', 'companion', 'notes'];
     const deltaX = touchEndRef.current.x - touchStartRef.current.x;
     const deltaY = touchEndRef.current.y - touchStartRef.current.y;
@@ -2970,7 +2980,7 @@ if (editModal.type === 'acTracking' && char) {
     >
 
       <div className="max-w-4xl mx-auto mb-4">
-        <div className={`flex gap-2 overflow-x-auto ${theme.bgCard} rounded-lg p-2`}>
+        <div ref={tabBarRef} className={`flex gap-2 overflow-x-auto ${theme.bgCard} rounded-lg p-2`}>
           {[
             { id: 'main', label: 'Main' },
             { id: 'attack', label: 'Attack' },
@@ -5415,7 +5425,18 @@ if (editModal.type === 'acTracking' && char) {
 
         {activeTab === 'dice' && (
           <div className="space-y-4">
-            <h2 className="text-2xl font-bold">Dice Roller</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Dice Roller</h2>
+              <button
+                onClick={() => {
+                  setDiceConfig({ d2: 0, d3: 0, d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 });
+                  setDiceRolls(null);
+                }}
+                className="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+              >
+                Clear All
+              </button>
+            </div>
             
             <div className="space-y-3">
               {[2, 3, 4, 6, 8, 10, 12, 20, 100].map(sides => {
@@ -6290,9 +6311,9 @@ if (editModal.type === 'acTracking' && char) {
 {editModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4 z-50">
           <div
-            className={`bg-gray-800 rounded-lg p-4 sm:p-6 sm:pr-10 w-full max-h-screen overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
+            className={`bg-gray-800 rounded-lg p-4 sm:p-6 sm:pr-10 w-full overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
             // Helps prevent the scrollbar from overlapping right-edge text on supported browsers.
-            style={{ scrollbarGutter: 'stable' }}
+            style={{ scrollbarGutter: 'stable', maxHeight: 'calc(100vh - 2rem)', maxHeight: 'calc(100dvh - 2rem)' }}
           >
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold">
