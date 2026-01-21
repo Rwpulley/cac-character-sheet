@@ -931,6 +931,14 @@ function CaCCharacterSheetInner() {
   const [showRolledAttributes, setShowRolledAttributes] = useState(false);
   const [attributeRollMethod, setAttributeRollMethod] = useState(2); // 1, 2, or 3
   
+  // Track if user has seen app info - persisted to localStorage
+  const [hasSeenAppInfo, setHasSeenAppInfo] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('cac-seen-app-info') === 'true';
+    }
+    return false;
+  });
+  
   // Theme state - persisted to localStorage
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -2896,7 +2904,34 @@ if (editModal.type === 'acTracking' && char) {
       <style>{lightThemeStyles}</style>
       <div className={`min-h-screen ${theme.bg} ${theme.text} p-4 overflow-x-hidden ${!isDarkTheme ? 'light-theme' : ''}`}>
         <div className={`max-w-2xl mx-auto ${theme.bgCard} rounded-lg p-8`}>
-          <h1 className="text-4xl font-bold mb-4 text-center">Castles & Crusades</h1>
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <h1 className="text-4xl font-bold text-center">Castles & Crusades</h1>
+            {hasSeenAppInfo && (
+              <button
+                onClick={() => setEditModal({ type: 'appInfo' })}
+                className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
+              >
+                <Info size={20} />
+              </button>
+            )}
+          </div>
+          
+          {/* Info Button - Prominent for first-time users */}
+          {!hasSeenAppInfo && (
+            <div className="flex justify-center mb-6">
+              <button
+                onClick={() => {
+                  setEditModal({ type: 'appInfo' });
+                  setHasSeenAppInfo(true);
+                  localStorage.setItem('cac-seen-app-info', 'true');
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 text-white font-semibold"
+              >
+                <Info size={18} />
+                <span>Click Here Before Creating a Character</span>
+              </button>
+            </div>
+          )}
           
           {/* Import Error Only */}
           {importError && (
@@ -3015,6 +3050,65 @@ if (editModal.type === 'acTracking' && char) {
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {editModal?.type === 'appInfo' && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg" style={{ maxHeight: 'calc(100dvh - 2rem)', overflowY: 'auto' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">About This App</h2>
+              <button
+                onClick={closeModal}
+                className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="text-sm text-gray-200 space-y-4">
+              <p>
+                This character tracking app is designed to be used in conjunction with the <span className="font-semibold text-white">Castles & Crusades Players Handbook</span>, <span className="font-semibold text-white">Adventurers Backpack</span>, and <span className="font-semibold text-white">Castle Keepers Guide</span>. It is not meant to replace the books, but to replace the printed paper character sheet.
+              </p>
+
+              <div>
+                <div className="font-bold text-white mb-2">Features:</div>
+                <ul className="list-disc list-inside space-y-1 text-gray-300">
+                  <li>Roll attributes using your preferred method (3d6, 4d6 drop lowest, or best of 6)</li>
+                  <li>Track your attribute modifiers as you increase in level</li>
+                  <li>Track your HP with automatic CON modifier calculations</li>
+                  <li>Track your experience and see when you reach your next level</li>
+                  <li>Track AC based on Race abilities, Armor, and Shield modifiers</li>
+                  <li>Track your inventory including weight and encumbrance</li>
+                  <li>Add inventory items that give Attribute, Speed, HP, and AC bonuses, as well as items that give bonuses to weapons</li>
+                  <li>Perform money exchange using Gold as your base currency</li>
+                  <li>Track ammo usage when used with a ranged weapon</li>
+                  <li>Show attack rolls with all bonuses applied</li>
+                  <li>Track what spells you know and have prepared</li>
+                  <li>Track your magical inventory and daily spell uses</li>
+                  <li>Track Checks and Saves with appropriate modifiers, including +6 for Prime Attributes</li>
+                  <li>Track companions including their details, attacks, and HP</li>
+                  <li>Use a multitude of dice to roll for whatever you may need</li>
+                  <li>Notes section with date and time to track your group's progress</li>
+                </ul>
+              </div>
+
+              <div className="bg-gray-700 p-3 rounded">
+                <p className="text-gray-300">
+                  This app does not have everything. If there is anything you think should be included, please reach out:
+                </p>
+                <p className="font-semibold text-blue-400 mt-1">Rwpull@gmail.com</p>
+              </div>
+            </div>
+
+            <button
+              onClick={closeModal}
+              className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-4 font-semibold"
+            >
+              Got It
+            </button>
           </div>
         </div>
       )}
@@ -6866,6 +6960,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <p className="text-sm text-gray-300">
                     Bonus modifiers can be added temporarily for the effects of a spell or curse.
                   </p>
+                  <div className="mt-2 p-3 bg-gray-900 rounded">
+                    <p className="text-sm text-gray-300">
+                      <span className="font-semibold text-yellow-400">Tip: No-Damage Attacks</span> — If you need to add an attack that does no damage, such as Trip or Grapple, click <span className="font-semibold text-white">Manual Attack</span> and uncheck the <span className="font-semibold text-white">Uses Damage Dice</span> checkbox.
+                    </p>
+                  </div>
                 </div>
               )}
 
