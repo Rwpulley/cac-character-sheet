@@ -3056,26 +3056,26 @@ if (editModal.type === 'acTracking' && char) {
 
       {editModal?.type === 'appInfo' && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg" style={{ maxHeight: 'calc(100dvh - 2rem)', overflowY: 'auto' }}>
+          <div className={`${theme.bgCard} rounded-lg p-6 w-full max-w-lg`} style={{ maxHeight: 'calc(100dvh - 2rem)', overflowY: 'auto' }}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">About This App</h2>
+              <h2 className={`text-xl font-bold ${theme.text}`}>About This App</h2>
               <button
                 onClick={closeModal}
-                className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+                className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
                 aria-label="Close"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="text-sm text-gray-200 space-y-4">
+            <div className={`text-sm ${theme.textMuted2} space-y-4`}>
               <p>
-                This character tracking app is designed to be used in conjunction with the <span className="font-semibold text-white">Castles & Crusades Players Handbook</span>, <span className="font-semibold text-white">Adventurers Backpack</span>, and <span className="font-semibold text-white">Castle Keepers Guide</span>. It is not meant to replace the books, but to replace the printed paper character sheet.
+                This character tracking app is designed to be used in conjunction with the <span className={`font-semibold ${theme.text}`}>Castles & Crusades Players Handbook</span>, <span className={`font-semibold ${theme.text}`}>Adventurers Backpack</span>, and <span className={`font-semibold ${theme.text}`}>Castle Keepers Guide</span>. It is not meant to replace the books, but to replace the printed paper character sheet.
               </p>
 
               <div>
-                <div className="font-bold text-white mb-2">Features:</div>
-                <ul className="list-disc list-inside space-y-1 text-gray-300">
+                <div className={`font-bold ${theme.text} mb-2`}>Features:</div>
+                <ul className={`list-disc list-inside space-y-1 ${theme.textMuted2}`}>
                   <li>Roll attributes using your preferred method (3d6, 4d6 drop lowest, or best of 6)</li>
                   <li>Track your attribute modifiers as you increase in level</li>
                   <li>Track your HP with automatic CON modifier calculations</li>
@@ -3095,8 +3095,8 @@ if (editModal.type === 'acTracking' && char) {
                 </ul>
               </div>
 
-              <div className="bg-gray-700 p-3 rounded">
-                <p className="text-gray-300">
+              <div className={`${theme.bgCard2} p-3 rounded`}>
+                <p className={theme.textMuted2}>
                   This app does not have everything. If there is anything you think should be included, please reach out:
                 </p>
                 <p className="font-semibold text-blue-400 mt-1">Rwpull@gmail.com</p>
@@ -3105,7 +3105,7 @@ if (editModal.type === 'acTracking' && char) {
 
             <button
               onClick={closeModal}
-              className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-4 font-semibold"
+              className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-4 font-semibold text-white"
             >
               Got It
             </button>
