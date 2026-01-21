@@ -927,8 +927,9 @@ function CaCCharacterSheetInner() {
   
   // Attribute roller state
   const [attributeRollerOpen, setAttributeRollerOpen] = useState(false);
-  const [attributeRolls, setAttributeRolls] = useState([]); // Array of 6 rolls, each roll is { dice: [4 numbers], dropped: number, total: number }
+  const [attributeRolls, setAttributeRolls] = useState([]); // Array of 6 rolls
   const [showRolledAttributes, setShowRolledAttributes] = useState(false);
+  const [attributeRollMethod, setAttributeRollMethod] = useState(2); // 1, 2, or 3
   
   // Theme state - persisted to localStorage
   const [isDarkTheme, setIsDarkTheme] = useState(() => {
@@ -2312,25 +2313,78 @@ if (editModal.type === 'acTracking' && char) {
 
   const rollDice = (sides) => Math.floor(Math.random() * sides) + 1;
 
-  // Roll 4d6 drop lowest for attribute generation
+  // Roll attributes based on selected method
   const rollAttributeSet = () => {
     const newRolls = [];
-    for (let i = 0; i < 6; i++) {
-      const dice = [rollDice(6), rollDice(6), rollDice(6), rollDice(6)];
-      // Find the index of the lowest die (first occurrence only)
-      let minVal = dice[0];
-      let droppedIndex = 0;
-      for (let j = 1; j < 4; j++) {
-        if (dice[j] < minVal) {
-          minVal = dice[j];
-          droppedIndex = j;
-        }
+    
+    if (attributeRollMethod === 1) {
+      // Method 1: Roll 3d6, take total
+      for (let i = 0; i < 6; i++) {
+        const dice = [rollDice(6), rollDice(6), rollDice(6)];
+        const total = dice.reduce((sum, d) => sum + d, 0);
+        newRolls.push({ dice, droppedIndex: -1, total });
       }
-      // Sum all dice except the dropped one
-      const total = dice.reduce((sum, d, idx) => idx === droppedIndex ? sum : sum + d, 0);
-      newRolls.push({ dice, droppedIndex, total });
+    } else if (attributeRollMethod === 2) {
+      // Method 2: Roll 4d6, drop lowest
+      for (let i = 0; i < 6; i++) {
+        const dice = [rollDice(6), rollDice(6), rollDice(6), rollDice(6)];
+        // Find the index of the lowest die (first occurrence only)
+        let minVal = dice[0];
+        let droppedIndex = 0;
+        for (let j = 1; j < 4; j++) {
+          if (dice[j] < minVal) {
+            minVal = dice[j];
+            droppedIndex = j;
+          }
+        }
+        // Sum all dice except the dropped one
+        const total = dice.reduce((sum, d, idx) => idx === droppedIndex ? sum : sum + d, 0);
+        newRolls.push({ dice, droppedIndex, total });
+      }
+    } else if (attributeRollMethod === 3) {
+      // Method 3: Roll 3d6 six times per attribute, take highest total
+      const attrNames = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+      for (let i = 0; i < 6; i++) {
+        let bestRoll = null;
+        let bestTotal = 0;
+        const allSixRolls = [];
+        for (let r = 0; r < 6; r++) {
+          const dice = [rollDice(6), rollDice(6), rollDice(6)];
+          const total = dice.reduce((sum, d) => sum + d, 0);
+          allSixRolls.push({ dice, total });
+          if (total > bestTotal) {
+            bestTotal = total;
+            bestRoll = { dice, total, rollIndex: r };
+          }
+        }
+        newRolls.push({ 
+          dice: bestRoll.dice, 
+          droppedIndex: -1, 
+          total: bestTotal, 
+          attrName: attrNames[i],
+          allRolls: allSixRolls,
+          bestRollIndex: bestRoll.rollIndex
+        });
+      }
     }
+    
     setAttributeRolls(newRolls);
+  };
+  
+  // Insert Method 3 rolls into attributes
+  const insertMethod3Rolls = () => {
+    if (attributeRollMethod !== 3 || attributeRolls.length !== 6) return;
+    const attrKeys = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+    const newAttributes = { ...char.attributes };
+    attrKeys.forEach((key, idx) => {
+      newAttributes[key] = {
+        ...newAttributes[key],
+        rolledScore: attributeRolls[idx].total
+      };
+    });
+    updateChar({ attributes: newAttributes });
+    setAttributeRolls([]);
+    setAttributeRollerOpen(false);
   };
 
   const sortSpellsLevelName = (a, b) => {
@@ -3138,10 +3192,10 @@ if (editModal.type === 'acTracking' && char) {
               {/* Display rolled attribute totals */}
               {showRolledAttributes && attributeRolls.length === 6 && (
                 <div className="bg-yellow-900/50 border border-yellow-600 rounded p-3 mb-3">
-                  <div className="text-sm text-yellow-300 mb-1">Rolled Attributes:</div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="text-sm text-yellow-300 mb-2">Rolled Attributes:</div>
+                  <div className="grid grid-cols-3 gap-2 justify-items-center max-w-xs mx-auto">
                     {attributeRolls.map((roll, idx) => (
-                      <span key={idx} className="bg-yellow-700 px-3 py-1 rounded font-bold text-lg">
+                      <span key={idx} className="bg-yellow-700 px-4 py-1 rounded font-bold text-lg text-center">
                         {roll.total}
                       </span>
                     ))}
@@ -3926,93 +3980,109 @@ if (editModal.type === 'acTracking' && char) {
 
             <div className="space-y-3">
 
-              {Object.entries(char.attributes).map(([key, attr]) => {
-                const attrTotal = getAttributeTotal(key);
-                const mod = calcMod(attrTotal);
-                const level = getTotalLevel();
-                const prime = attr.isPrime ? char.primeSaveBonus : 0;
-                const saveModifier = char.attributes[key].saveModifier || 0;
-                const encStatus = getEncumbranceStatus();
-                const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
-                const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
-                const total = level + mod + prime + saveModifier + encDexPenalty;
+              {(() => {
+                const saveDescriptions = {
+                  str: 'Paralysis, Constriction',
+                  int: 'Arcane Magic, Illusion',
+                  wis: 'Divine Magic, Confusion, Gaze Attack, Polymorph, Petrification',
+                  dex: 'Breath Weapons, Traps',
+                  con: 'Disease, Energy Drain, Poison',
+                  cha: 'Death Attack, Charm, Fear'
+                };
                 
-                return (
-                  <div key={key} className="bg-gray-700 p-4 rounded">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="font-bold uppercase text-2xl">{key}</div>
-                          <button onClick={() => setEditModal({ type: 'saveModifier', attr: key })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
-                            <Edit2 size={16} />
-                          </button>
-                        </div>
-                        <div className="text-base space-y-1">
-                          <div>Level: +{level}</div>
-                          <div>Mod: {mod >= 0 ? '+' : ''}{mod}</div>
-                          <div>Prime: +{prime}</div>
-                          {key === 'dex' && encStatus === 'burdened' && (
-                            <div>Burdened: -2</div>
-                          )}
-                          {saveModifier !== 0 && <div className="text-purple-400">Modifier: {saveModifier >= 0 ? '+' : ''}{saveModifier}</div>}
-                          <div className="font-bold text-xl border-t border-gray-600 pt-2 mt-2">
-                            Save Bonus: {total >= 0 ? `+${total}` : String(total)}
+                return Object.entries(char.attributes).map(([key, attr]) => {
+                  const attrTotal = getAttributeTotal(key);
+                  const mod = calcMod(attrTotal);
+                  const level = getTotalLevel();
+                  const prime = attr.isPrime ? char.primeSaveBonus : 0;
+                  const saveModifier = char.attributes[key].saveModifier || 0;
+                  const encStatus = getEncumbranceStatus();
+                  const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
+                  const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
+                  const total = level + mod + prime + saveModifier + encDexPenalty;
+                  
+                  return (
+                    <div key={key} className="bg-gray-700 p-4 rounded">
+                      <div className="flex items-start gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="font-bold uppercase text-2xl">{key}</div>
+                            <button onClick={() => setEditModal({ type: 'saveModifier', attr: key })} className="p-2 bg-gray-600 rounded hover:bg-gray-500">
+                              <Edit2 size={16} />
+                            </button>
+                          </div>
+                          <div className="text-base space-y-1">
+                            <div>Level: +{level}</div>
+                            <div>Mod: {mod >= 0 ? '+' : ''}{mod}</div>
+                            <div>Prime: +{prime}</div>
+                            {key === 'dex' && encStatus === 'burdened' && (
+                              <div>Burdened: -2</div>
+                            )}
+                            {saveModifier !== 0 && <div className="text-purple-400">Modifier: {saveModifier >= 0 ? '+' : ''}{saveModifier}</div>}
+                            <div className="font-bold text-xl border-t border-gray-600 pt-2 mt-2">
+                              Save Bonus: {total >= 0 ? `+${total}` : String(total)}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex-1">
-                        {isDexOverburdened ? (
-                          <div className="w-full py-3 bg-gray-800 rounded text-lg font-bold mb-2 text-center text-gray-300 opacity-90">
-                            Overburdened
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setRollModal({ type: 'save', attr: key, total });
-                              setRollResult(null);
-                            }}
-                            className="w-full py-3 bg-green-600 rounded hover:bg-green-700 text-lg font-bold mb-2"
-                          >
-                            Roll Check/Save
-                          </button>
-                        )}
-                        
-                        {!isDexOverburdened && rollModal?.type === 'save' && rollModal.attr === key && (
-                          <div className="p-3 bg-gray-600 rounded">
+                        <div className="flex-1">
+                          {isDexOverburdened ? (
+                            <div className="w-full py-3 bg-gray-800 rounded text-lg font-bold mb-2 text-center text-gray-300 opacity-90">
+                              Overburdened
+                            </div>
+                          ) : (
                             <button
                               onClick={() => {
-                                const roll = rollDice(20);
-                                setRollResult({ roll, total: roll + total });
+                                setRollModal({ type: 'save', attr: key, total });
+                                setRollResult(null);
                               }}
-                              className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 text-base font-bold mb-2"
+                              className="w-full py-3 bg-green-600 rounded hover:bg-green-700 text-lg font-bold mb-2"
                             >
-                              Roll d20
+                              Roll Check/Save
                             </button>
-                            <input
-                              type="text" inputMode="numeric"
-                              placeholder="Enter roll (1-20)"
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value);
-                                if (val >= 1 && val <= 20) {
-                                  setRollResult({ roll: val, total: val + total });
-                                }
-                              }}
-                              className="w-full p-2 bg-gray-800 rounded text-white text-base mb-2"
-                            />
-                            {rollResult && (
-                              <div className="text-center">
-                                <div className="text-base mb-1">d20: {rollResult.roll} + {total}</div>
-                                <div className="text-2xl font-bold text-green-400">Total: {rollResult.total}</div>
-                              </div>
-                            )}
+                          )}
+                          
+                          {!isDexOverburdened && rollModal?.type === 'save' && rollModal.attr === key && (
+                            <div className="p-3 bg-gray-600 rounded">
+                              <button
+                                onClick={() => {
+                                  const roll = rollDice(20);
+                                  setRollResult({ roll, total: roll + total });
+                                }}
+                                className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 text-base font-bold mb-2"
+                              >
+                                Roll d20
+                              </button>
+                              <input
+                                type="text" inputMode="numeric"
+                                placeholder="Enter roll (1-20)"
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value);
+                                  if (val >= 1 && val <= 20) {
+                                    setRollResult({ roll: val, total: val + total });
+                                  }
+                                }}
+                                className="w-full p-2 bg-gray-800 rounded text-white text-base mb-2"
+                              />
+                              {rollResult && (
+                                <div className="text-center">
+                                  <div className="text-base mb-1">d20: {rollResult.roll} + {total}</div>
+                                  <div className="text-2xl font-bold text-green-400">Total: {rollResult.total}</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Save description */}
+                          <div className="text-xs text-gray-400 mt-2 text-right">
+                            {saveDescriptions[key]}
                           </div>
-                        )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
@@ -6244,7 +6314,7 @@ if (editModal.type === 'acTracking' && char) {
       {/* Attribute Roller Modal */}
       {attributeRollerOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-          <div className="bg-gray-800 rounded-lg p-4 sm:p-6 w-full max-w-md">
+          <div className="bg-gray-800 rounded-lg p-4 sm:p-6 w-full max-w-md" style={{ maxHeight: 'calc(100dvh - 2rem)', overflowY: 'auto' }}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold">Roll Attributes</h3>
               <button
@@ -6255,16 +6325,74 @@ if (editModal.type === 'acTracking' && char) {
               </button>
             </div>
             
-            <p className="text-sm text-gray-400 mb-4">
-              Roll 4d6, drop the lowest die, and sum the remaining three for each attribute.
-            </p>
+            {/* Method Selection */}
+            <div className="space-y-2 mb-4 bg-gray-900 p-3 rounded">
+              <div className="text-sm font-bold text-gray-300 mb-2">Rolling Method:</div>
+              
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="rollMethod"
+                  checked={attributeRollMethod === 1}
+                  onChange={() => { setAttributeRollMethod(1); setAttributeRolls([]); }}
+                  className="w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-semibold">Method 1: 3d6</div>
+                  <div className="text-xs text-gray-400">Roll 3d6 six times, take the total of each roll. Arrange as desired.</div>
+                </div>
+              </label>
+              
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="rollMethod"
+                  checked={attributeRollMethod === 2}
+                  onChange={() => { setAttributeRollMethod(2); setAttributeRolls([]); }}
+                  className="w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-semibold">Method 2: 4d6 Drop Lowest</div>
+                  <div className="text-xs text-gray-400">Roll 4d6 six times, drop the lowest die from each roll. Arrange as desired.</div>
+                </div>
+              </label>
+              
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="rollMethod"
+                  checked={attributeRollMethod === 3}
+                  onChange={() => { setAttributeRollMethod(3); setAttributeRolls([]); }}
+                  className="w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-semibold">Method 3: Best of 6 Rolls (Fixed Order)</div>
+                  <div className="text-xs text-gray-400">Roll 3d6 six times per attribute, keep the highest total. Scores go in order: STR, DEX, CON, INT, WIS, CHA.</div>
+                </div>
+              </label>
+            </div>
             
+            {/* Roll Results */}
             <div className="space-y-2 mb-4">
               {attributeRolls.length === 0 ? (
                 <div className="text-gray-500 text-center py-8">
-                  Click "Roll Attributes" to generate 6 attribute scores
+                  Select a method and click "Roll Attributes"
                 </div>
+              ) : attributeRollMethod === 3 ? (
+                // Method 3 display - show attribute name and best roll
+                attributeRolls.map((roll, idx) => (
+                  <div key={idx} className="bg-gray-700 p-2 rounded">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-yellow-400">{roll.attrName}</span>
+                      <span className="font-bold text-xl text-green-400">{roll.total}</span>
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      Best of 6 rolls: [{roll.dice.join(', ')}] = {roll.total}
+                    </div>
+                  </div>
+                ))
               ) : (
+                // Method 1 & 2 display
                 attributeRolls.map((roll, idx) => (
                   <div key={idx} className="flex items-center gap-3 bg-gray-700 p-2 rounded">
                     <span className="text-gray-400 w-16">Roll {idx + 1}:</span>
@@ -6287,7 +6415,8 @@ if (editModal.type === 'acTracking' && char) {
               )}
             </div>
             
-            {attributeRolls.length === 6 && (
+            {/* Totals for Method 1 & 2 */}
+            {attributeRolls.length === 6 && attributeRollMethod !== 3 && (
               <div className="bg-gray-900 p-3 rounded mb-4">
                 <div className="text-sm text-gray-400 mb-1">Totals:</div>
                 <div className="flex flex-wrap gap-2">
@@ -6300,6 +6429,7 @@ if (editModal.type === 'acTracking' && char) {
               </div>
             )}
             
+            {/* Buttons */}
             <div className="flex gap-2">
               <button
                 onClick={rollAttributeSet}
@@ -6307,22 +6437,40 @@ if (editModal.type === 'acTracking' && char) {
               >
                 Roll Attributes
               </button>
-              <button
-                onClick={() => {
-                  if (attributeRolls.length === 6) {
-                    setShowRolledAttributes(true);
-                    setAttributeRollerOpen(false);
-                  }
-                }}
-                disabled={attributeRolls.length !== 6}
-                className={`flex-1 py-2 rounded font-semibold ${
-                  attributeRolls.length === 6 
-                    ? 'bg-green-600 hover:bg-green-700' 
-                    : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                Show
-              </button>
+              
+              {attributeRollMethod === 3 ? (
+                // Method 3: Insert button
+                <button
+                  onClick={insertMethod3Rolls}
+                  disabled={attributeRolls.length !== 6}
+                  className={`flex-1 py-2 rounded font-semibold ${
+                    attributeRolls.length === 6 
+                      ? 'bg-green-600 hover:bg-green-700' 
+                      : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  Insert
+                </button>
+              ) : (
+                // Method 1 & 2: Show button
+                <button
+                  onClick={() => {
+                    if (attributeRolls.length === 6) {
+                      setShowRolledAttributes(true);
+                      setAttributeRollerOpen(false);
+                    }
+                  }}
+                  disabled={attributeRolls.length !== 6}
+                  className={`flex-1 py-2 rounded font-semibold ${
+                    attributeRolls.length === 6 
+                      ? 'bg-green-600 hover:bg-green-700' 
+                      : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  Show
+                </button>
+              )}
+              
               <button
                 onClick={() => {
                   setAttributeRolls([]);
@@ -6883,8 +7031,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   
                   <div>
                     <h4 className="font-bold text-blue-400 mb-1">Attributes</h4>
-                    <p className="text-sm text-gray-300">
-                      Enter your rolled attribute scores manually, or click the 🎲 button near the Attributes title to roll them automatically. After rolling, click <span className="font-semibold text-white">Show</span> to display your rolled numbers so you can decide which score goes where. Once you've assigned them, click the 🎲 button again and select <span className="font-semibold text-white">Clear</span> to hide the rolled values. You can also designate an attribute as a Prime, which provides bonuses to related checks and saves.
+                    <p className="text-sm text-gray-300 mb-2">
+                      Enter your rolled attribute scores manually, or click the 🎲 button near the Attributes title to roll them automatically. Three rolling methods are available:
+                    </p>
+                    <ul className="text-sm text-gray-300 space-y-1 ml-4 list-disc">
+                      <li><span className="font-semibold text-white">Method 1 (3d6):</span> Roll 3d6 six times. Arrange scores as desired.</li>
+                      <li><span className="font-semibold text-white">Method 2 (4d6 Drop Lowest):</span> Roll 4d6 six times, drop the lowest die each time. Arrange scores as desired.</li>
+                      <li><span className="font-semibold text-white">Method 3 (Best of 6, Fixed):</span> Roll 3d6 six times per attribute, keep the highest. Scores are assigned in order (STR, DEX, CON, INT, WIS, CHA).</li>
+                    </ul>
+                    <p className="text-sm text-gray-300 mt-2">
+                      You can also designate an attribute as a Prime, which provides bonuses to related checks and saves.
                     </p>
                   </div>
                   
