@@ -1,10 +1,35 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, Component, ErrorInfo, ReactNode, ChangeEvent } from 'react';
 import { Plus, Minus, Edit2, X, Trash2, Download, Upload, Info } from 'lucide-react';
+
+// ===== CONSTANTS =====
+const STORAGE_KEY = 'cac-character-sheet-data';
+const STORAGE_VERSION = 1;
+const AUTO_SAVE_DELAY_MS = 500;
+const TOAST_DURATION_MS = 3000;
+const VIRTUALIZED_LIST_THRESHOLD = 15;
+const DEFAULT_ITEM_HEIGHT = 120;
+const DEFAULT_CONTAINER_HEIGHT = 500;
+const DEFAULT_OVERSCAN = 3;
+const MIN_SWIPE_DISTANCE = 50;
+
+// ===== ID GENERATION =====
+/** Generate a unique ID using crypto API with fallback */
+const generateId = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+};
+
+/** Generate a numeric ID (for compatibility with existing data) */
+const generateNumericId = (): number => Date.now();
 
 // ===== TYPESCRIPT INTERFACES =====
 interface Attribute {
   rolledScore: number;
   raceBonus: number;
+  bonusMod: number;
   isPrime: boolean;
   saveModifier: number;
 }
@@ -229,6 +254,95 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 // ===== END ERROR BOUNDARY =====
 
+// ===== MODAL ERROR BOUNDARY =====
+interface ModalErrorBoundaryProps {
+  children: ReactNode;
+  onClose?: () => void;
+  fallbackTitle?: string;
+}
+
+interface ModalErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+/**
+ * Error boundary specifically for modals.
+ * When a modal crashes, it shows an error message and allows closing
+ * without crashing the entire app.
+ */
+class ModalErrorBoundary extends Component<ModalErrorBoundaryProps, ModalErrorBoundaryState> {
+  constructor(props: ModalErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ModalErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('Modal Error:', error, errorInfo);
+  }
+
+  handleClose = () => {
+    this.setState({ hasError: false, error: null });
+    this.props.onClose?.();
+  };
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold text-red-400 mb-3">
+              {this.props.fallbackTitle || 'Modal Error'}
+            </h2>
+            <p className="text-gray-300 mb-3">
+              Something went wrong displaying this content.
+            </p>
+            <p className="text-sm text-gray-500 mb-4 font-mono bg-gray-900 p-2 rounded overflow-auto max-h-24">
+              {this.state.error?.message || 'Unknown error'}
+            </p>
+            <button
+              onClick={this.handleClose}
+              className="w-full px-4 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+// ===== END MODAL ERROR BOUNDARY =====
+
+// ===== LOADING SPINNER COMPONENT =====
+interface LoadingSpinnerProps {
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}
+
+const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ size = 'md', className = '' }) => {
+  const sizeClasses = {
+    sm: 'w-4 h-4 border-2',
+    md: 'w-8 h-8 border-3',
+    lg: 'w-12 h-12 border-4'
+  };
+  
+  return (
+    <div 
+      className={`${sizeClasses[size]} border-gray-600 border-t-blue-500 rounded-full animate-spin ${className}`}
+      role="status"
+      aria-label="Loading"
+    />
+  );
+};
+// ===== END LOADING SPINNER =====
+
 // Light theme CSS overrides
 const lightThemeStyles = `
   .light-theme {
@@ -296,12 +410,10 @@ const lightThemeStyles = `
 `;
 
 // ===== LOCAL STORAGE PERSISTENCE =====
-const STORAGE_KEY = 'cac-character-sheet-data';
-const STORAGE_VERSION = 1;
 
-const saveToLocalStorage = (characters) => {
+const saveToLocalStorage = (characters: Character[]): boolean => {
   try {
-    const data = {
+    const data: StorageData = {
       version: STORAGE_VERSION,
       savedAt: new Date().toISOString(),
       characters
@@ -314,11 +426,11 @@ const saveToLocalStorage = (characters) => {
   }
 };
 
-const loadFromLocalStorage = () => {
+const loadFromLocalStorage = (): Character[] | null => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw);
+    const data: StorageData = JSON.parse(raw);
     // Handle version migrations here if needed in the future
     return data.characters || [];
   } catch (err) {
@@ -327,7 +439,7 @@ const loadFromLocalStorage = () => {
   }
 };
 
-const exportToFile = (characters) => {
+const exportToFile = (characters: Character[]): void => {
   const data = {
     version: STORAGE_VERSION,
     exportedAt: new Date().toISOString(),
@@ -344,12 +456,12 @@ const exportToFile = (characters) => {
   URL.revokeObjectURL(url);
 };
 
-const importFromFile = (file) => {
+const importFromFile = (file: File): Promise<Character[]> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = (e: ProgressEvent<FileReader>) => {
       try {
-        const data = JSON.parse(e.target?.result);
+        const data = JSON.parse(e.target?.result as string);
         if (Array.isArray(data.characters)) {
           resolve(data.characters);
         } else if (Array.isArray(data)) {
@@ -371,9 +483,9 @@ const importFromFile = (file) => {
 
 // ===== UTILITY FUNCTIONS =====
 
-// Debounce hook for text inputs
-function useDebounce(value, delay = 300) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
+/** Debounce hook for text inputs */
+function useDebounce<T>(value: T, delay: number = 300): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
   
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedValue(value), delay);
@@ -383,22 +495,28 @@ function useDebounce(value, delay = 300) {
   return debouncedValue;
 }
 
-// Debounced input component for text fields
+interface DebouncedInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
+  value: string;
+  onChange: (value: string) => void;
+  debounceMs?: number;
+}
+
+/** Debounced input component for text fields */
 const DebouncedInput = React.memo(function DebouncedInput({ 
   value, 
   onChange, 
   debounceMs = 300,
   ...props 
-}) {
+}: DebouncedInputProps) {
   const [localValue, setLocalValue] = useState(value);
-  const timeoutRef = useRef(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Sync local value when external value changes
   useEffect(() => {
     setLocalValue(value);
   }, [value]);
   
-  const handleChange = useCallback((e) => {
+  const handleChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setLocalValue(newValue);
     
@@ -423,21 +541,27 @@ const DebouncedInput = React.memo(function DebouncedInput({
   return <input {...props} value={localValue} onChange={handleChange} />;
 });
 
-// Debounced textarea component
+interface DebouncedTextareaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> {
+  value: string;
+  onChange: (value: string) => void;
+  debounceMs?: number;
+}
+
+/** Debounced textarea component */
 const DebouncedTextarea = React.memo(function DebouncedTextarea({ 
   value, 
   onChange, 
   debounceMs = 300,
   ...props 
-}) {
+}: DebouncedTextareaProps) {
   const [localValue, setLocalValue] = useState(value);
-  const timeoutRef = useRef(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
     setLocalValue(value);
   }, [value]);
   
-  const handleChange = useCallback((e) => {
+  const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     setLocalValue(newValue);
     
@@ -461,26 +585,36 @@ const DebouncedTextarea = React.memo(function DebouncedTextarea({
   return <textarea {...props} value={localValue} onChange={handleChange} />;
 });
 
-// Virtualized list component for long lists (inventory, spells, etc.)
-const VirtualizedList = React.memo(function VirtualizedList({
+interface VirtualizedListProps<T> {
+  items: T[];
+  renderItem: (item: T, index: number) => React.ReactNode;
+  itemHeight?: number;
+  containerHeight?: number;
+  overscan?: number;
+  className?: string;
+  emptyMessage?: string;
+}
+
+/** Virtualized list component for long lists (inventory, spells, etc.) */
+const VirtualizedList = React.memo(function VirtualizedList<T extends { id?: number | string }>({
   items,
   renderItem,
-  itemHeight = 120,
-  containerHeight = 500,
-  overscan = 3,
+  itemHeight = DEFAULT_ITEM_HEIGHT,
+  containerHeight = DEFAULT_CONTAINER_HEIGHT,
+  overscan = DEFAULT_OVERSCAN,
   className = '',
   emptyMessage = 'No items'
-}) {
-  const containerRef = useRef(null);
+}: VirtualizedListProps<T>) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   
-  const handleScroll = useCallback((e) => {
-    setScrollTop(e.target.scrollTop);
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
   }, []);
   
   const { visibleItems, startIndex, totalHeight, offsetY } = useMemo(() => {
     if (!items || items.length === 0) {
-      return { visibleItems: [], startIndex: 0, totalHeight: 0, offsetY: 0 };
+      return { visibleItems: [] as T[], startIndex: 0, totalHeight: 0, offsetY: 0 };
     }
     
     const totalHeight = items.length * itemHeight;
@@ -498,7 +632,7 @@ const VirtualizedList = React.memo(function VirtualizedList({
   }
   
   // For small lists, render normally without virtualization
-  if (items.length <= 15) {
+  if (items.length <= VIRTUALIZED_LIST_THRESHOLD) {
     return (
       <div className={`space-y-3 ${className}`}>
         {items.map((item, index) => (
@@ -530,11 +664,12 @@ const VirtualizedList = React.memo(function VirtualizedList({
       </div>
     </div>
   );
-});
+}) as <T extends { id?: number | string }>(props: VirtualizedListProps<T>) => React.ReactElement;
 
 // ===== END UTILITY FUNCTIONS =====
 
-const calcMod = (value) => {
+/** Calculate attribute modifier based on score */
+const calcMod = (value: number): number => {
   if (value <= 1) return -4;
   if (value <= 3) return -3;
   if (value <= 5) return -2;
@@ -552,16 +687,38 @@ const calcMod = (value) => {
   return 10; // 30+
 };
 
-function clamp(n, min, max) {
+/** Clamp a number between min and max bounds */
+function clamp(n: number, min: number | null, max: number | null): number {
   if (min != null && n < min) return min;
   if (max != null && n > max) return max;
   return n;
+}
+
+interface DomStepperProps {
+  id?: string;
+  defaultValue?: number;
+  value?: number;
+  onChange?: (value: number) => void;
+  step?: number;
+  min?: number | null;
+  max?: number | null;
+  className?: string;
+  valuePrefix?: string;
+  valueSuffix?: string;
+  allowManual?: boolean;
+  resetToken?: number;
+  label?: string; // For accessibility
 }
 
 /**
  * Touch-friendly numeric control that supports both:
  * 1. Legacy mode: uses hidden input with id for document.getElementById access
  * 2. Controlled mode: uses value/onChange props like a standard React input
+ * 
+ * Accessibility features:
+ * - Keyboard navigation (Arrow keys, Home, End)
+ * - ARIA labels and live regions
+ * - Focus management
  */
 const DomStepper = React.memo(function DomStepper({
   id,
@@ -576,14 +733,15 @@ const DomStepper = React.memo(function DomStepper({
   valueSuffix = '',
   allowManual = false,
   resetToken = 0,
-}) {
+  label,
+}: DomStepperProps) {
   // Use controlled mode if value prop is provided
   const isControlled = controlledValue !== undefined;
   const [internalVal, setInternalVal] = useState(Number(defaultValue) || 0);
   
   const val = isControlled ? controlledValue : internalVal;
   const setVal = isControlled 
-    ? (newVal) => {
+    ? (newVal: number | ((prev: number) => number)) => {
         const computed = typeof newVal === 'function' ? newVal(val) : newVal;
         onChangeCallback?.(computed);
       }
@@ -596,16 +754,58 @@ const DomStepper = React.memo(function DomStepper({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultValue, id, resetToken, isControlled]);
 
-  const dec = useCallback(() => setVal((v) => clamp((Number(v) || 0) - step, min, max)), [setVal, step, min, max]);
-  const inc = useCallback(() => setVal((v) => clamp((Number(v) || 0) + step, min, max)), [setVal, step, min, max]);
+  const dec = useCallback(() => setVal((v: number) => clamp((Number(v) || 0) - step, min, max)), [setVal, step, min, max]);
+  const inc = useCallback(() => setVal((v: number) => clamp((Number(v) || 0) + step, min, max)), [setVal, step, min, max]);
+
+  // Keyboard handler for the container
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowUp':
+      case 'ArrowRight':
+        e.preventDefault();
+        inc();
+        break;
+      case 'ArrowDown':
+      case 'ArrowLeft':
+        e.preventDefault();
+        dec();
+        break;
+      case 'Home':
+        if (min !== null) {
+          e.preventDefault();
+          setVal(min);
+        }
+        break;
+      case 'End':
+        if (max !== null) {
+          e.preventDefault();
+          setVal(max);
+        }
+        break;
+    }
+  }, [inc, dec, min, max, setVal]);
+
+  const ariaLabel = label || 'Numeric value';
+  const ariaValueText = `${valuePrefix}${val}${valueSuffix}`;
 
   return (
-    <div className={`flex items-center gap-1 ${className}`}>
+    <div 
+      className={`flex items-center gap-1 ${className}`}
+      role="spinbutton"
+      aria-label={ariaLabel}
+      aria-valuenow={val}
+      aria-valuemin={min ?? undefined}
+      aria-valuemax={max ?? undefined}
+      aria-valuetext={ariaValueText}
+      tabIndex={allowManual ? -1 : 0}
+      onKeyDown={allowManual ? undefined : handleKeyDown}
+    >
       <button
         type="button"
         onClick={dec}
-        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500"
-        aria-label="Decrease"
+        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        aria-label={`Decrease ${ariaLabel}`}
+        tabIndex={-1}
       >
         −
       </button>
@@ -616,7 +816,7 @@ const DomStepper = React.memo(function DomStepper({
           type="text"
           inputMode="numeric"
           value={val === 0 ? '' : String(val)}
-          onChange={(e) => {
+          onChange={(e: ChangeEvent<HTMLInputElement>) => {
             const raw = String(e.target.value || '');
             if (raw === '' || raw === '-') {
               setVal(0);
@@ -626,16 +826,19 @@ const DomStepper = React.memo(function DomStepper({
             const next = parseInt(cleaned, 10);
             setVal(Number.isFinite(next) ? clamp(next, min, max) : 0);
           }}
+          onKeyDown={handleKeyDown}
           placeholder="0"
-          className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 px-1"
+          aria-label={ariaLabel}
+          className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 px-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
 
       ) : (
 
-        <div className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 flex items-center justify-center px-1">
-
+        <div 
+          className="min-w-0 flex-1 text-center text-base font-semibold bg-gray-800 rounded-lg h-11 flex items-center justify-center px-1"
+          aria-hidden="true"
+        >
           {valuePrefix}{val}{valueSuffix}
-
         </div>
 
       )}
@@ -643,19 +846,21 @@ const DomStepper = React.memo(function DomStepper({
       <button
         type="button"
         onClick={inc}
-        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500"
-        aria-label="Increase"
+        className="h-11 w-11 min-w-[2.75rem] flex-shrink-0 rounded-lg bg-gray-700 hover:bg-gray-600 text-xl font-bold active:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        aria-label={`Increase ${ariaLabel}`}
+        tabIndex={-1}
       >
         +
       </button>
 
       {/* Hidden input for legacy getElementById access - only rendered if id is provided */}
-      {id && <input type="text" inputMode="numeric" id={id} value={val} readOnly className="hidden" />}
+      {id && <input type="text" inputMode="numeric" id={id} value={val} readOnly className="hidden" aria-hidden="true" />}
     </div>
   );
 });
 
-const getUnarmedAttackName = (attacks) => {
+/** Generate name for unarmed attacks */
+const getUnarmedAttackName = (attacks: Attack[] | null | undefined): string => {
   const count = (attacks || []).filter(a => (a?.name || '').startsWith('Unarmed Attack')).length;
   if (count === 0) return 'Unarmed Attack (Primary)';
   if (count === 1) return 'Unarmed Attack (Secondary)';
@@ -663,8 +868,9 @@ const getUnarmedAttackName = (attacks) => {
   return `Unarmed Attack (${count + 1}th)`;
 };
 
-const getWeaponModes = (item) => {
-  const modes = [];
+/** Get available weapon modes for an inventory item */
+const getWeaponModes = (item: InventoryItem | null | undefined): ('melee' | 'ranged')[] => {
+  const modes: ('melee' | 'ranged')[] = [];
   const melee = item?.weaponMelee ?? ((item?.weaponType || 'melee') === 'melee');
   const ranged = item?.weaponRanged ?? ((item?.weaponType || 'melee') === 'ranged');
   if (melee) modes.push('melee');
@@ -672,17 +878,36 @@ const getWeaponModes = (item) => {
   return modes;
 };
 
-const getBoundAttackName = (attack, inventory) => {
+/** Get display name for a weapon-bound attack */
+const getBoundAttackName = (attack: Attack | null | undefined, inventory: InventoryItem[] | null | undefined): string => {
   if (!attack?.weaponId) return attack?.name || '';
   const item = (inventory || []).find(it => String(it.id) === String(attack.weaponId));
   const baseName = item?.name || 'Weapon';
-  const mode = (attack.weaponMode || attack.weaponType || item?.weaponType || 'melee');
+  const mode = (attack.weaponMode || item?.weaponType || 'melee');
   const modeLabel = mode === 'ranged' ? 'Ranged' : 'Melee';
   return `${baseName} (${modeLabel})`;
 };
 
 // ===== Inventory Item Effects (attack/AC boosters that remain attached to the item) =====
-const ensureEquippedEffectShape = (char) => {
+
+interface EquippedEffectShape {
+  attack: string[];
+  unarmed: string[];
+  ac: string[];
+}
+
+interface NormalizedEffect {
+  id: string;
+  kind: 'attack' | 'ac';
+  miscToHit?: number;
+  miscDamage?: number;
+  magicToHit?: number;
+  magicDamage?: number;
+  ac?: number;
+}
+
+/** Ensure equipped effect IDs have the correct shape */
+const ensureEquippedEffectShape = (char: Character | null | undefined): EquippedEffectShape => {
   const cur = (char && char.equippedEffectItemIds && typeof char.equippedEffectItemIds === 'object')
     ? char.equippedEffectItemIds
     : {};
@@ -693,14 +918,15 @@ const ensureEquippedEffectShape = (char) => {
   };
 };
 
-const normalizeItemEffects = (item) => {
+/** Normalize item effects to a consistent format */
+const normalizeItemEffects = (item: InventoryItem | null | undefined): NormalizedEffect[] => {
   // Effects are attached to the inventory item. An item can have multiple effects.
   // Supported shape (current):
   //   { id, kind: 'attack' | 'ac', miscToHit, miscDamage, magicToHit, magicDamage, ac }
   // Back-compat: earlier drafts used toHit/damage or booster-style fields.
-  const raw = Array.isArray(item?.effects) ? item.effects : [];
+  const raw = Array.isArray((item as any)?.effects) ? (item as any).effects : [];
 
-  const normalized = raw.map((e, idx) => {
+  const normalized: NormalizedEffect[] = raw.map((e: any, idx: number) => {
     if (!e) return null;
 
     const id = e.id ?? `${item?.id || 'item'}-eff-${idx}`;
@@ -709,7 +935,7 @@ const normalizeItemEffects = (item) => {
     const legacyToHit = (e.toHit !== undefined) ? (Number(e.toHit) || 0) : 0;
     const legacyDmg = (e.damage !== undefined) ? (Number(e.damage) || 0) : 0;
 
-    const kind = e.kind === 'ac' ? 'ac' : 'attack';
+    const kind: 'attack' | 'ac' = e.kind === 'ac' ? 'ac' : 'attack';
 
     return {
       id: String(id),
@@ -720,18 +946,18 @@ const normalizeItemEffects = (item) => {
       magicDamage: Number(e.magicDamage) || 0,
       ac: Number(e.ac) || 0
     };
-  }).filter(Boolean);
+  }).filter(Boolean) as NormalizedEffect[];
 
   // Back-compat: older "isBooster/booster*" style
-  if (!normalized.length && item?.isBooster) {
+  if (!normalized.length && (item as any)?.isBooster) {
     return [{
-      id: `legacy-${item.id}`,
+      id: `legacy-${item?.id}`,
       kind: 'attack',
-      miscToHit: Number(item.boosterToHit) || 0,
-      miscDamage: Number(item.boosterDamage) || 0,
+      miscToHit: Number((item as any).boosterToHit) || 0,
+      miscDamage: Number((item as any).boosterDamage) || 0,
       magicToHit: 0,
       magicDamage: 0,
-      ac: Number(item.boosterAC) || 0
+      ac: Number((item as any).boosterAC) || 0
     }];
   }
 
@@ -748,9 +974,9 @@ const normalizeItemEffects = (item) => {
         kind: 'ac',
         ac: Number(acBonus.value) || 0
       });
-    } else if (!bonusesArr.length && String(item.attrBonusAttr || '').toLowerCase() === 'ac') {
+    } else if (!bonusesArr.length && String((item as any).attrBonusAttr || '').toLowerCase() === 'ac') {
       // Legacy fallback
-      const v = Number(item.attrBonusValue) || 0;
+      const v = Number((item as any).attrBonusValue) || 0;
       if (v !== 0) {
         normalized.push({
           id: `attrbonus-ac-${item?.id || 'item'}`,
@@ -764,17 +990,18 @@ const normalizeItemEffects = (item) => {
 return normalized;
 };
 
-const effectSummary = (item, section, inventory) => {
+/** Generate a summary string for item effects */
+const effectSummary = (item: InventoryItem | null | undefined, section: 'attack' | 'ac', inventory: InventoryItem[] | null | undefined): string => {
   const effects = normalizeItemEffects(item);
   if (!effects?.length) return '';
 
-  const parts = [];
+  const parts: string[] = [];
   for (const e of effects) {
     if (!e) continue;
 
     // Attack effects: show once (we no longer split unarmed vs weapon at the item level)
     if (e.kind === 'attack' && section === 'attack') {
-      const bits = [];
+      const bits: string[] = [];
       const mHit = Number(e.miscToHit) || 0;
       const mDmg = Number(e.miscDamage) || 0;
       const mgHit = Number(e.magicToHit) || 0;
@@ -797,10 +1024,18 @@ const effectSummary = (item, section, inventory) => {
   return parts.join(' | ');
 };
 
-const sumEffectBonusesForAttack = (char, attack) => {
+interface EffectBonuses {
+  miscToHit: number;
+  miscDamage: number;
+  magicToHit: number;
+  magicDamage: number;
+}
+
+/** Sum up all effect bonuses for a given attack */
+const sumEffectBonusesForAttack = (char: Character | null | undefined, attack: Attack | null | undefined): EffectBonuses => {
   const inventory = char?.inventory || [];
-  const selected = Array.isArray(attack?.appliedEffectItemIds)
-    ? attack.appliedEffectItemIds.map(x => String(x))
+  const selected = Array.isArray((attack as any)?.appliedEffectItemIds)
+    ? (attack as any).appliedEffectItemIds.map((x: any) => String(x))
     : [];
   const selectedSet = new Set(selected);
 
@@ -823,7 +1058,8 @@ const sumEffectBonusesForAttack = (char, attack) => {
   return { miscToHit, miscDamage, magicToHit, magicDamage };
 };
 
-const sumEffectAC = (char) => {
+/** Sum up AC bonuses from equipped effect items */
+const sumEffectAC = (char: Character | null | undefined): number => {
   const inventory = char?.inventory || [];
   const equipped = ensureEquippedEffectShape(char);
   const activeIds = new Set((equipped.ac || []).map(x => String(x)));
@@ -841,8 +1077,9 @@ const sumEffectAC = (char) => {
   return ac;
 };
 
-const createNewCharacter = () => ({
-  id: Date.now(),
+/** Create a new character with default values */
+const createNewCharacter = (): Character => ({
+  id: generateNumericId(),
   name: "New Character",
   race: "", 
   raceDetails: "",
@@ -878,12 +1115,12 @@ const createNewCharacter = () => ({
   bth: 0, 
   currentXp: 0,
   attributes: {
-    str: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
-    dex: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
-    con: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
-    int: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
-    wis: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 },
-    cha: { rolledScore: 10, bonusMod: 0, isPrime: false, saveModifier: 0 }
+    str: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 },
+    dex: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 },
+    con: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 },
+    int: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 },
+    wis: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 },
+    cha: { rolledScore: 10, raceBonus: 0, bonusMod: 0, isPrime: false, saveModifier: 0 }
   },
   xpTable: [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000],
   hpByLevel: [0, 0, 0],
@@ -975,13 +1212,18 @@ function CaCCharacterSheetInner() {
   };
   
   // In-app confirmation modal (replaces browser confirm())
-  const [confirmModal, setConfirmModal] = useState(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    message: string;
+    onConfirm?: () => void;
+    confirmText?: string;
+    danger?: boolean;
+  } | null>(null);
   // Usage: setConfirmModal({ message: 'Delete?', onConfirm: () => doSomething() })
 
   // Toast notification system
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState<{ message: string; type: string } | null>(null);
   // Usage: showToast('Message', 'error') or showToast('Success!', 'success')
-  const showToast = useCallback((message, type = 'info', duration = 3000) => {
+  const showToast = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info', duration: number = TOAST_DURATION_MS) => {
     setToast({ message, type });
     setTimeout(() => setToast(null), duration);
   }, []);
@@ -1507,12 +1749,12 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       return;
     }
     
-    // Schedule the save after 500ms (throttled/debounced)
+    // Schedule the save after delay (throttled/debounced)
     saveTimeoutRef.current = setTimeout(() => {
       const dataToSave = pendingSaveRef.current;
       saveToLocalStorage(dataToSave);
       saveTimeoutRef.current = null;
-    }, 500);
+    }, AUTO_SAVE_DELAY_MS);
     
     return () => {
       // Don't clear the timeout on cleanup - let the save complete
@@ -1524,34 +1766,61 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     exportToFile(characters);
   }, [characters]);
 
+  // Pending import state for the import confirmation modal
+  const [pendingImport, setPendingImport] = useState<Character[] | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
   const handleImportClick = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = async (e) => {
-      const file = e.target?.files?.[0];
+    input.onchange = async (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target?.files?.[0];
       if (!file) return;
+      
+      setIsImporting(true);
       try {
         setImportError(null);
         const imported = await importFromFile(file);
         if (imported.length > 0) {
-          // Ask user if they want to replace or merge
-          const replace = window.confirm(
-            `Import ${imported.length} character(s)?\n\nOK = Replace all current characters\nCancel = Add to existing characters`
-          );
-          if (replace) {
-            setCharacters(imported);
-            setCurrentCharIndex(null);
-          } else {
-            setCharacters(prev => [...prev, ...imported]);
-          }
+          // Show import confirmation modal instead of window.confirm
+          setPendingImport(imported);
+          setEditModal({ type: 'importConfirm' });
         }
-      } catch (err) {
+      } catch (err: any) {
         setImportError('Failed to import: ' + (err?.message || 'Invalid file'));
         setTimeout(() => setImportError(null), 5000);
+      } finally {
+        setIsImporting(false);
       }
     };
     input.click();
+  }, []);
+
+  // Handle import confirmation
+  const handleImportReplace = useCallback(() => {
+    if (pendingImport) {
+      setCharacters(pendingImport);
+      setCurrentCharIndex(null);
+      showToast(`Imported ${pendingImport.length} character(s)`, 'success');
+    }
+    setPendingImport(null);
+    setEditModal(null);
+  }, [pendingImport, showToast]);
+
+  const handleImportMerge = useCallback(() => {
+    if (pendingImport) {
+      setCharacters(prev => [...prev, ...pendingImport]);
+      showToast(`Added ${pendingImport.length} character(s)`, 'success');
+    }
+    setPendingImport(null);
+    setEditModal(null);
+  }, [pendingImport, showToast]);
+
+  const handleImportCancel = useCallback(() => {
+    setPendingImport(null);
+    setEditModal(null);
   }, []);
 
   // ===== MEMOIZED MODAL HANDLERS =====
@@ -1956,6 +2225,34 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const getSpeedPreEncumbrance = () => memoizedEncumbrance.preEncumbranceSpeed || 0;
   const getEncumbranceSpeedPenalty = () => memoizedEncumbrance.speedPenalty;
   const getSpeedTotal = () => memoizedEncumbrance.finalSpeed || 0;
+
+  // Modal focus management ref
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
+
+  // Focus management for modals - trap focus and restore on close
+  useEffect(() => {
+    if (editModal) {
+      // Store the previously focused element
+      previousActiveElementRef.current = document.activeElement as HTMLElement;
+      
+      // Focus the modal after a short delay to allow rendering
+      setTimeout(() => {
+        if (modalRef.current) {
+          const firstFocusable = modalRef.current.querySelector<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          );
+          firstFocusable?.focus();
+        }
+      }, 50);
+    } else {
+      // Restore focus when modal closes
+      if (previousActiveElementRef.current) {
+        previousActiveElementRef.current.focus();
+        previousActiveElementRef.current = null;
+      }
+    }
+  }, [editModal]);
 
   // Keep modal-specific state in sync when opening different modals
   useEffect(() => {
@@ -2475,11 +2772,11 @@ if (editModal.type === 'acTracking' && char) {
     const cost = spellPointCost(spell.level);
     const left = getGrimoirePointsLeft(g);
     if (cost > left) {
-      alert(`Not enough space in ${g.name}. Need ${cost} points, only ${left} left.`);
+      showToast(`Not enough space in ${g.name}. Need ${cost} points, only ${left} left.`, 'warning');
       return;
     }
     const newEntry = {
-      instanceId: Date.now(),
+      instanceId: generateNumericId(),
       spellId: spell.id,
       // store a copy so edits to learned don't have to propagate unless you want them to
       spell: spell,
@@ -2570,12 +2867,12 @@ if (editModal.type === 'acTracking' && char) {
     const addCount = Math.max(0, Math.min(remaining, copies || 1));
 
     if (addCount <= 0) {
-      window.alert("No room left in this item.");
+      showToast("No room left in this item.", 'warning');
       return;
     }
 
     const newEntries = Array.from({ length: addCount }).map(() => ({
-      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      id: generateId(),
       spell: { ...spell },
       permanent: !!permanent,
       usedToday: false,
@@ -2709,20 +3006,192 @@ if (editModal.type === 'acTracking' && char) {
     updateChar({ magicItems: updated });
   };
 
-  const updateChar = (updates) => {
-    const newChars = [...characters];
-    newChars[currentCharIndex] = { ...char, ...updates };
+  const updateChar = useCallback((updates: Partial<Character>) => {
+    setCharacters(prevChars => {
+      const newChars = [...prevChars];
+      if (currentCharIndex !== null && newChars[currentCharIndex]) {
+        newChars[currentCharIndex] = { ...newChars[currentCharIndex], ...updates };
+      }
+      return newChars;
+    });
+  }, [currentCharIndex]);
 
-  const toggleEquippedEffectItem = (section, id) => {
+  const toggleEquippedEffectItem = useCallback((section: 'attack' | 'unarmed' | 'ac', id: number | string) => {
     if (!char) return;
     const sid = String(id);
     const cur = ensureEquippedEffectShape(char);
     const next = cur[section].includes(sid) ? cur[section].filter(x => x !== sid) : [...cur[section], sid];
     updateChar({ equippedEffectItemIds: { ...cur, [section]: next } });
-  };
+  }, [char, updateChar]);
 
-    setCharacters(newChars);
-  };
+  // ===== EXTRACTED HANDLER FUNCTIONS =====
+  // These replace complex inline onClick handlers for better readability and testability
+
+  /** Handler for saving an attack (new or edit) */
+  const handleSaveAttack = useCallback(() => {
+    if (!char || !editModal) return;
+    
+    const existing = (char.attacks || []).find(a => a.id === editModal.attack?.id) || (editModal.attack || {});
+    const appliedIdsRaw = Array.isArray(editModal.attack?.appliedEffectItemIds)
+      ? editModal.attack.appliedEffectItemIds
+      : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds : []);
+    const appliedEffectItemIds = appliedIdsRaw.map((x: any) => String(x));
+
+    const newAttack = {
+      ...existing,
+      ...editModal.attack,
+      id: editModal.attack?.id || existing.id || generateNumericId(),
+      name: attackForm.name || existing.name || '',
+      numDice: attackForm.useDamageDice ? attackForm.numDice : 0,
+      dieType: attackForm.useDamageDice ? attackForm.dieType : 0,
+      useDamageDice: attackForm.useDamageDice,
+      weaponMode: attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee',
+      autoMods: (editModal.attack?.autoMods ?? existing.autoMods ?? (!!(editModal.attack?.weaponId || existing.weaponId) || ['melee','ranged'].includes(attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee'))),
+      bthBonus: attackForm.bth,
+      bth: attackForm.bth,
+      attrMod: attackForm.attrMod,
+      magic: attackForm.magic,
+      misc: attackForm.misc,
+      damageMod: attackForm.damageMod,
+      damageMagic: attackForm.damageMagic,
+      damageMisc: attackForm.damageMisc,
+      appliedEffectItemIds
+    };
+    
+    const newAtks = editModal.type === 'newAttack' 
+      ? [...char.attacks, newAttack]
+      : char.attacks.map(a => a.id === newAttack.id ? newAttack : a);
+    
+    updateChar({ attacks: newAtks });
+    setEditModal(null);
+  }, [char, editModal, attackForm, updateChar]);
+
+  /** Handler for deleting an attack */
+  const handleDeleteAttack = useCallback(() => {
+    if (!char || !editModal?.attack) return;
+    updateChar({ attacks: char.attacks.filter(a => a.id !== editModal.attack.id) });
+    setEditModal(null);
+  }, [char, editModal, updateChar]);
+
+  /** Handler for saving a companion */
+  const handleSaveCompanion = useCallback(() => {
+    if (!char) return;
+    
+    const companionData = {
+      id: editModal?.companion?.id || generateNumericId(),
+      name: companionForm.name,
+      species: companionForm.species,
+      description: companionForm.description,
+      hp: companionForm.hp,
+      maxHp: companionForm.maxHp,
+      ac: companionForm.ac,
+      groundSpeed: companionForm.groundSpeed,
+      flySpeed: companionForm.flySpeed,
+      saves: {
+        str: { bonus: companionForm.saveStr },
+        dex: { bonus: companionForm.saveDex },
+        con: { bonus: companionForm.saveCon },
+        int: { bonus: companionForm.saveInt },
+        wis: { bonus: companionForm.saveWis },
+        cha: { bonus: companionForm.saveCha }
+      },
+      attacks: editModal?.companion?.attacks || []
+    };
+
+    if (editModal?.type === 'newCompanion') {
+      updateChar({ companions: [...(char.companions || []), companionData] });
+    } else {
+      updateChar({
+        companions: (char.companions || []).map(c => 
+          c.id === companionData.id ? companionData : c
+        )
+      });
+    }
+    setEditModal(null);
+  }, [char, editModal, companionForm, updateChar]);
+
+  /** Handler for deleting a companion */
+  const handleDeleteCompanion = useCallback(() => {
+    if (!char || !editModal?.companion) return;
+    updateChar({ 
+      companions: (char.companions || []).filter(c => c.id !== editModal.companion.id) 
+    });
+    setEditModal(null);
+  }, [char, editModal, updateChar]);
+
+  /** Handler for saving a companion attack */
+  const handleSaveCompanionAttack = useCallback(() => {
+    if (!char || !editModal?.companion) return;
+    
+    const attackData = {
+      id: editModal?.attack?.id || generateNumericId(),
+      isFavorite: !!editModal?.attack?.isFavorite,
+      name: compAttackForm.name,
+      numDice: compAttackForm.numDice,
+      dieType: compAttackForm.dieType,
+      bth: compAttackForm.bth,
+      mod: compAttackForm.mod,
+      toHitMagic: compAttackForm.toHitMagic,
+      toHitMisc: compAttackForm.toHitMisc,
+      damageBonus: compAttackForm.damageBonus,
+      damageMagic: compAttackForm.damageMagic,
+      damageMisc: compAttackForm.damageMisc
+    };
+
+    const updatedCompanions = (char.companions || []).map(c => {
+      if (c.id !== editModal.companion.id) return c;
+      
+      const attacks = editModal.type === 'newCompanionAttack'
+        ? [...(c.attacks || []), attackData]
+        : (c.attacks || []).map(a => a.id === attackData.id ? attackData : a);
+      
+      return { ...c, attacks };
+    });
+
+    updateChar({ companions: updatedCompanions });
+    setEditModal(null);
+  }, [char, editModal, compAttackForm, updateChar]);
+
+  /** Handler for deleting a companion attack */
+  const handleDeleteCompanionAttack = useCallback(() => {
+    if (!char || !editModal?.companion || !editModal?.attack) return;
+    
+    const updatedCompanions = (char.companions || []).map(c => {
+      if (c.id !== editModal.companion.id) return c;
+      return {
+        ...c,
+        attacks: (c.attacks || []).filter(a => a.id !== editModal.attack.id)
+      };
+    });
+
+    updateChar({ companions: updatedCompanions });
+    setEditModal(null);
+  }, [char, editModal, updateChar]);
+
+  /** Handler for toggling attack effect item selection */
+  const handleToggleAttackEffectItem = useCallback((itemId: number | string) => {
+    if (!editModal) return;
+    
+    const selected = Array.isArray(editModal.attack?.appliedEffectItemIds)
+      ? editModal.attack.appliedEffectItemIds.map((x: any) => String(x))
+      : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds.map((x: any) => String(x)) : []);
+    
+    const selectedSet = new Set(selected);
+    const sid = String(itemId);
+    
+    if (selectedSet.has(sid)) {
+      selectedSet.delete(sid);
+    } else {
+      selectedSet.add(sid);
+    }
+    
+    const arr = Array.from(selectedSet);
+    setEditModal({
+      ...editModal,
+      appliedEffectItemIds: arr,
+      attack: { ...(editModal.attack || {}), appliedEffectItemIds: arr }
+    });
+  }, [editModal]);
 
   // --------------------
   // Notes tab helpers
@@ -2814,20 +3283,20 @@ if (editModal.type === 'acTracking' && char) {
   const calculateNextLevel = () => memoizedLevelInfo;
 
   // Swipe navigation handlers (must be before conditional returns to follow hooks rules)
-  const touchStartRef = useRef({ x: 0, y: 0 });
-  const touchEndRef = useRef({ x: 0, y: 0 });
-  const tabButtonRefs = useRef({});
-  const tabBarRef = useRef(null);
-  const touchStartedInTabBar = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const touchEndRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  const touchStartedInTabBar = useRef<boolean>(false);
   
-  const handleTouchStart = useCallback((e) => {
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     touchEndRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     // Check if touch started in the tab bar
-    touchStartedInTabBar.current = tabBarRef.current?.contains(e.target) || false;
+    touchStartedInTabBar.current = tabBarRef.current?.contains(e.target as Node) || false;
   }, []);
   
-  const handleTouchMove = useCallback((e) => {
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
     touchEndRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   }, []);
   
@@ -2841,12 +3310,11 @@ if (editModal.type === 'acTracking' && char) {
     const tabs = ['main', 'attack', 'inventory', 'magic', 'saves', 'dice', 'companion', 'notes'];
     const deltaX = touchEndRef.current.x - touchStartRef.current.x;
     const deltaY = touchEndRef.current.y - touchStartRef.current.y;
-    const minSwipeDistance = 50;
     
     // Only trigger if horizontal swipe is greater than vertical (to not interfere with scrolling)
-    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > minSwipeDistance) {
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > MIN_SWIPE_DISTANCE) {
       const currentIndex = tabs.indexOf(activeTab);
-      let newTab = null;
+      let newTab: string | null = null;
       if (deltaX < 0 && currentIndex < tabs.length - 1) {
         // Swipe left - go to next tab
         newTab = tabs[currentIndex + 1];
@@ -2858,7 +3326,7 @@ if (editModal.type === 'acTracking' && char) {
         setActiveTab(newTab);
         // Scroll the tab button into view
         setTimeout(() => {
-          tabButtonRefs.current[newTab]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          tabButtonRefs.current[newTab as string]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }, 10);
       }
     }
@@ -2952,10 +3420,20 @@ if (editModal.type === 'acTracking' && char) {
             </button>
             <button
               onClick={handleImportClick}
-              className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} flex items-center justify-center gap-1`}
+              disabled={isImporting}
+              className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              <Upload size={14} />
-              Import
+              {isImporting ? (
+                <>
+                  <LoadingSpinner size="sm" />
+                  Importing...
+                </>
+              ) : (
+                <>
+                  <Upload size={14} />
+                  Import
+                </>
+              )}
             </button>
           </div>
 
@@ -3048,6 +3526,52 @@ if (editModal.type === 'acTracking' && char) {
                 className="px-4 py-2 text-base bg-red-600 rounded hover:bg-red-700 font-semibold"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Confirmation Modal */}
+      {editModal?.type === 'importConfirm' && pendingImport && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className={`${theme.bgCard} rounded-lg p-6 w-full max-w-md`}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-xl font-bold ${theme.text}`}>Import Characters</h2>
+              <button
+                onClick={handleImportCancel}
+                className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className={`text-sm ${theme.textMuted2} mb-6`}>
+              Found <span className="font-semibold">{pendingImport.length}</span> character(s) to import. 
+              How would you like to proceed?
+            </p>
+
+            <div className="space-y-3">
+              <button
+                onClick={handleImportReplace}
+                className="w-full py-3 bg-red-600 rounded-lg hover:bg-red-700 font-semibold text-white"
+              >
+                Replace All ({characters.length} current → {pendingImport.length} new)
+              </button>
+              
+              <button
+                onClick={handleImportMerge}
+                className="w-full py-3 bg-blue-600 rounded-lg hover:bg-blue-700 font-semibold text-white"
+              >
+                Add to Existing ({characters.length} + {pendingImport.length} = {characters.length + pendingImport.length})
+              </button>
+              
+              <button
+                onClick={handleImportCancel}
+                className={`w-full py-3 ${theme.bgCard2} rounded-lg ${theme.hover} font-semibold`}
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -5165,7 +5689,7 @@ if (editModal.type === 'acTracking' && char) {
                       onClick={() => {
                         const spell = (char.spellsLearned || []).find((s) => String(s.id) === String(invSelectedSpellId));
                         if (!spell) {
-                          window.alert('Could not find that spell in Spells Learned.');
+                          showToast('Could not find that spell in Spells Learned.', 'error');
                           return;
                         }
                         addSpellEntriesToMagicItem(item.id, spell, invCopies, invPermanent);
@@ -6580,7 +7104,13 @@ if (editModal.type === 'acTracking' && char) {
       )}
 
 {editModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4 z-50">
+        <ModalErrorBoundary onClose={closeModal} fallbackTitle="Modal Error">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-2 sm:p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          ref={modalRef}
+        >
           <div
             className={`bg-gray-800 rounded-lg p-4 sm:p-6 sm:pr-10 w-full overflow-y-auto ${editModal?.type === 'hpTracking' ? 'max-w-2xl' : 'max-w-md'} `}
             // Helps prevent the scrollbar from overlapping right-edge text on supported browsers.
@@ -6632,7 +7162,11 @@ if (editModal.type === 'acTracking' && char) {
                 {editModal.type === 'raceAbilities' && 'Edit Race Abilities'}
                 {editModal.type === 'advantages' && 'Edit Advantages'}
               </h3>
-              <button onClick={closeModal} className="text-gray-400 hover:text-white">
+              <button 
+                onClick={closeModal} 
+                className="text-gray-400 hover:text-white"
+                aria-label="Close modal"
+              >
                 <X size={24} />
               </button>
             </div>
@@ -10114,9 +10648,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <button
                           onClick={() => {
                             const spellId = parseInt(modalForms.grimoireSpellSelect);
-                            if (!spellId) { alert('Select a spell.'); return; }
+                            if (!spellId) { showToast('Select a spell.', 'warning'); return; }
                             const spell = (char.spellsLearned || []).find(s => s.id === spellId);
-                            if (!spell) { alert('Spell not found.'); return; }
+                            if (!spell) { showToast('Spell not found.', 'error'); return; }
                             addSpellToGrimoire(grimoire.id, spell);
                             setEditModal(null);
                           }}
@@ -10245,33 +10779,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
 
                   <button
-                    onClick={() => {
-                      const newComp = {
-                        id: editModal.companion?.id || Date.now(),
-                        name: companionForm.name,
-                        species: companionForm.species,
-                        description: companionForm.description,
-                        hp: companionForm.hp,
-                        maxHp: companionForm.maxHp,
-                        ac: companionForm.ac,
-                        groundSpeed: companionForm.groundSpeed,
-                        flySpeed: companionForm.flySpeed,
-                        saves: {
-                          str: { bonus: companionForm.saveStr },
-                          dex: { bonus: companionForm.saveDex },
-                          con: { bonus: companionForm.saveCon },
-                          int: { bonus: companionForm.saveInt },
-                          wis: { bonus: companionForm.saveWis },
-                          cha: { bonus: companionForm.saveCha }
-                        },
-                        attacks: editModal.companion?.attacks || []
-                      };
-                      const newComps = editModal.type === 'newCompanion' ? 
-                        [...char.companions, newComp] :
-                        char.companions.map(c => c.id === newComp.id ? newComp : c);
-                      updateChar({ companions: newComps });
-                      setEditModal(null);
-                    }}
+                    onClick={handleSaveCompanion}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
                   >
                     Save Companion
@@ -10279,10 +10787,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   {editModal.type === 'editCompanion' && (
                     <button
-                      onClick={() => {
-                        updateChar({ companions: char.companions.filter(c => c.id !== editModal.companion.id) });
-                        setEditModal(null);
-                      }}
+                      onClick={handleDeleteCompanion}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mt-2"
                     >
                       Delete Companion
@@ -10332,12 +10837,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-1">Dice Type</label>
-                      <input
-                        type="text" inputMode="numeric"
+                      <select
                         value={compAttackForm.dieType}
-                        onChange={(e) => updateCompAttackForm({ dieType: e.target.value === '' ? '' : (parseInt(e.target.value) || 6) })}
+                        onChange={(e) => updateCompAttackForm({ dieType: parseInt(e.target.value) || 6 })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
-                      />
+                      >
+                        {[2, 3, 4, 6, 8, 10, 12].map(d => (
+                          <option key={d} value={d}>d{d}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                   
@@ -10414,37 +10922,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
 
                   <button
-                    onClick={() => {
-                      const newAttack = {
-                        id: editModal.attack?.id || Date.now(),
-                        isFavorite: !!editModal.attack?.isFavorite,
-                        name: compAttackForm.name,
-                        numDice: compAttackForm.numDice,
-                        dieType: compAttackForm.dieType,
-                        bth: compAttackForm.bth,
-                        mod: compAttackForm.mod,
-                        toHitMagic: compAttackForm.toHitMagic,
-                        toHitMisc: compAttackForm.toHitMisc,
-                        damageBonus: compAttackForm.damageBonus,
-                        damageMagic: compAttackForm.damageMagic,
-                        damageMisc: compAttackForm.damageMisc
-                      };
-                      
-                      const updatedCompanion = { ...editModal.companion };
-                      if (editModal.type === 'newCompanionAttack') {
-                        updatedCompanion.attacks = [...(updatedCompanion.attacks || []), newAttack];
-                      } else {
-                        updatedCompanion.attacks = updatedCompanion.attacks.map(a => 
-                          a.id === newAttack.id ? newAttack : a
-                        );
-                      }
-                      
-                      const newComps = char.companions.map(c => 
-                        c.id === updatedCompanion.id ? updatedCompanion : c
-                      );
-                      updateChar({ companions: newComps });
-                      setEditModal(null);
-                    }}
+                    onClick={handleSaveCompanionAttack}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
                   >
                     Save Attack
@@ -10452,15 +10930,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   {editModal.type === 'editCompanionAttack' && (
                     <button
-                      onClick={() => {
-                        const updatedCompanion = { ...editModal.companion };
-                        updatedCompanion.attacks = updatedCompanion.attacks.filter(a => a.id !== editModal.attack.id);
-                        const newComps = char.companions.map(c => 
-                          c.id === updatedCompanion.id ? updatedCompanion : c
-                        );
-                        updateChar({ companions: newComps });
-                        setEditModal(null);
-                      }}
+                      onClick={handleDeleteCompanionAttack}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mt-2"
                     >
                       Delete Attack
@@ -10622,16 +11092,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  onChange={() => {
-                                    const next = new Set(selectedSet);
-                                    if (checked) next.delete(String(it.id)); else next.add(String(it.id));
-                                    const arr = Array.from(next);
-                                    setEditModal({
-                                      ...editModal,
-                                      appliedEffectItemIds: arr,
-                                      attack: { ...(editModal.attack || {}), appliedEffectItemIds: arr }
-                                    });
-                                  }}
+                                  onChange={() => handleToggleAttackEffectItem(it.id)}
                                 />
                                 <div>
                                   <div className="text-gray-200">{it.name || 'Item'}</div>
@@ -10645,41 +11106,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     })()}
                   </div>
 
-<button
-                    onClick={() => {
-                      const existing = (char.attacks || []).find(a => a.id === editModal.attack?.id) || (editModal.attack || {});
-                      const appliedIdsRaw = Array.isArray(editModal.attack?.appliedEffectItemIds)
-                        ? editModal.attack.appliedEffectItemIds
-                        : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds : []);
-                      const appliedEffectItemIds = appliedIdsRaw.map(x => String(x));
-
-                      const newAttack = {
-                        // Preserve all existing fields (weapon binding, favorite, mode, etc.)
-                        ...existing,
-                        ...editModal.attack,
-                        id: editModal.attack?.id || existing.id || Date.now(),
-                        name: attackForm.name || existing.name || '',
-                        numDice: attackForm.useDamageDice ? attackForm.numDice : 0,
-                        dieType: attackForm.useDamageDice ? attackForm.dieType : 0,
-                        useDamageDice: attackForm.useDamageDice,
-                        weaponMode: attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee',
-                        autoMods: (editModal.attack?.autoMods ?? existing.autoMods ?? (!!(editModal.attack?.weaponId || existing.weaponId) || ['melee','ranged'].includes(attackForm.weaponMode || existing.weaponMode || editModal.attack?.weaponMode || 'melee'))),
-                        bthBonus: attackForm.bth,
-                        bth: attackForm.bth,
-                        attrMod: attackForm.attrMod,
-                        magic: attackForm.magic,
-                        misc: attackForm.misc,
-                        damageMod: attackForm.damageMod,
-                        damageMagic: attackForm.damageMagic,
-                        damageMisc: attackForm.damageMisc,
-                        appliedEffectItemIds
-                      };
-                      const newAtks = editModal.type === 'newAttack' ? 
-                        [...char.attacks, newAttack] :
-                        char.attacks.map(a => a.id === newAttack.id ? newAttack : a);
-                      updateChar({ attacks: newAtks });
-                      setEditModal(null);
-                    }}
+                  <button
+                    onClick={handleSaveAttack}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
                   >
                     Save Attack
@@ -10687,10 +11115,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                   {editModal.type === 'editAttack' && (
                     <button
-                      onClick={() => {
-                        updateChar({ attacks: char.attacks.filter(a => a.id !== editModal.attack.id) });
-                        setEditModal(null);
-                      }}
+                      onClick={handleDeleteAttack}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mt-2"
                     >
                       Delete Attack
@@ -10701,6 +11126,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
             </div>
           </div>
         </div>
+        </ModalErrorBoundary>
       )}
 
       {/* In-app Confirmation Modal */}
