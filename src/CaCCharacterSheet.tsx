@@ -81,6 +81,13 @@ interface InventoryItem {
   effectToHitBonus?: number;
   effectDamageBonus?: number;
   effectDescription?: string;
+  // Container fields
+  isContainer?: boolean;
+  containerCapacity?: number;  // Max number of items (for normal containers)
+  isMagicalContainer?: boolean;
+  containerMaxWeight?: number;  // Max weight it can hold (for magical containers)
+  storedInId?: number;  // ID of container this item is stored in
+  storedCoinsGP?: number;  // GP value of coins stored in this container (for magical containers)
 }
 
 interface ItemEffect {
@@ -197,6 +204,9 @@ interface Character {
   weight?: string;
   description?: string;
   backstory?: string;
+  moneyGP: number;
+  includeCoinWeight?: boolean;
+  encumbranceEnabled?: boolean;  // defaults to true
   wallet?: {
     platinum: number;
     gold: number;
@@ -1276,7 +1286,13 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     weaponDamageMagic: '',
     weaponDamageMisc: '',
     weaponDamageNumDice: '',
-    weaponDamageDieType: 8
+    weaponDamageDieType: 8,
+    // Container properties
+    isContainer: false,
+    containerCapacity: '',
+    isMagicalContainer: false,
+    containerMaxWeight: '',
+    storedInId: null as number | null
   };
   
   const [itemModal, setItemModal] = useState(defaultItemModalState);
@@ -1439,6 +1455,20 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemWeaponDamageNumDice = useCallback((v) => updateItemModal({ weaponDamageNumDice: v }), [updateItemModal]);
   const setItemWeaponDamageDieType = useCallback((v) => updateItemModal({ weaponDamageDieType: v }), [updateItemModal]);
 
+  // Container getters
+  const itemIsContainer = itemModal.isContainer;
+  const itemContainerCapacity = itemModal.containerCapacity;
+  const itemIsMagicalContainer = itemModal.isMagicalContainer;
+  const itemContainerMaxWeight = itemModal.containerMaxWeight;
+  const itemStoredInId = itemModal.storedInId;
+
+  // Container setters
+  const setItemIsContainer = useCallback((v) => updateItemModal({ isContainer: v }), [updateItemModal]);
+  const setItemContainerCapacity = useCallback((v) => updateItemModal({ containerCapacity: v }), [updateItemModal]);
+  const setItemIsMagicalContainer = useCallback((v) => updateItemModal({ isMagicalContainer: v }), [updateItemModal]);
+  const setItemContainerMaxWeight = useCallback((v) => updateItemModal({ containerMaxWeight: v }), [updateItemModal]);
+  const setItemStoredInId = useCallback((v) => updateItemModal({ storedInId: v }), [updateItemModal]);
+
   // Legacy new effect setters
   const newEffectKind = newEffect.kind;
   const newEffectMiscToHit = newEffect.miscToHit;
@@ -1510,7 +1540,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Wallet modal form
   const [walletForm, setWalletForm] = useState({
-    cp: 0, sp: 0, gp: 0, pp: 0
+    cp: 0, sp: 0, gp: 0, pp: 0,
+    selectedCoinContainer: null as number | null
   });
   
   const updateWalletForm = useCallback((updates) => {
@@ -1518,7 +1549,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   }, []);
   
   const resetWalletForm = useCallback(() => {
-    setWalletForm({ cp: 0, sp: 0, gp: 0, pp: 0 });
+    // Don't reset selectedCoinContainer - only reset coin amounts
+    setWalletForm(prev => ({ ...prev, cp: 0, sp: 0, gp: 0, pp: 0 }));
   }, []);
 
   // Spell form (for newSpell/editSpell modals)
@@ -1984,25 +2016,68 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Memoized encumbrance calculations
   const memoizedEncumbrance = useMemo(() => {
-    if (!char) return { rating: 0, totalEV: 0, totalWeight: 0, status: 'unburdened', speedPenalty: 0 };
+    if (!char) return { rating: 0, totalEV: 0, totalWeight: 0, coinEV: 0, coinWeight: 0, status: 'unburdened', speedPenalty: 0 };
     
     const strScore = memoizedAttributeTotals.str;
     const strPrime = !!char.attributes?.str?.isPrime;
     const conPrime = !!char.attributes?.con?.isPrime;
     const rating = strScore + (strPrime ? 3 : 0) + (conPrime ? 3 : 0);
     
-    let totalEV = 0;
-    let totalWeight = 0;
+    // Build a set of magical container IDs for quick lookup
+    const magicalContainerIds = new Set(
+      (char.inventory || [])
+        .filter(it => it.isContainer && it.isMagicalContainer)
+        .map(it => it.id)
+    );
+    
+    let inventoryEV = 0;
+    let inventoryWeight = 0;
     (char.inventory || []).forEach(it => {
       const qty = Number(it.quantity) || 1;
       const ev = Number(it.ev) || 0;
       const weight = Number(it.weightPer) || 0;
-      totalEV += ev * qty;
-      totalWeight += weight * qty;
+      
+      // Check if item is stored in a container
+      const storedInId = it.storedInId;
+      const isStoredInContainer = storedInId != null && (char.inventory || []).some(c => c.id === storedInId && c.isContainer);
+      const isStoredInMagicalContainer = storedInId != null && magicalContainerIds.has(storedInId);
+      
+      // EV: Don't count if stored in ANY container
+      if (!isStoredInContainer) {
+        inventoryEV += ev * qty;
+      }
+      
+      // Weight: Don't count if stored in MAGICAL container, otherwise count
+      if (!isStoredInMagicalContainer) {
+        inventoryWeight += weight * qty;
+      }
     });
     
+    // Calculate coin weight and EV
+    // 16 coins = 1 lb, 160 coins = 1 EV
+    const totalGP = char.moneyGP || 0;
+    
+    // Calculate coins stored in magical containers (these don't count toward weight/EV)
+    const coinsInMagicalContainers = (char.inventory || [])
+      .filter(it => it.isContainer && it.isMagicalContainer)
+      .reduce((sum, container) => sum + (Number(container.storedCoinsGP) || 0), 0);
+    
+    // Only count coins NOT in magical containers
+    const coinsNotInContainers = Math.max(0, totalGP - coinsInMagicalContainers);
+    const coinCount = Math.ceil(Math.abs(coinsNotInContainers)); // Treat each GP as roughly 1 coin
+    const coinWeight = coinCount / 16; // 16 coins = 1 lb
+    const coinEV = coinCount / 160; // 160 coins = 1 EV
+    
+    // Include coin weight/EV only if setting is enabled
+    const includeCoinWeight = char.includeCoinWeight ?? false;
+    const totalEV = inventoryEV + (includeCoinWeight ? coinEV : 0);
+    const totalWeight = inventoryWeight + (includeCoinWeight ? coinWeight : 0);
+    
+    // Check if encumbrance effects are enabled (defaults to true)
+    const encumbranceEnabled = char.encumbranceEnabled ?? true;
+    
     let status = 'unburdened';
-    if (rating > 0) {
+    if (encumbranceEnabled && rating > 0) {
       if (totalEV > rating && totalEV <= (3 * rating)) status = 'burdened';
       else if (totalEV > (3 * rating)) status = 'overburdened';
     }
@@ -2023,13 +2098,15 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const preEncumbranceSpeed = baseSpeed + speedBonus + itemSpeedBonus;
     
     let speedPenalty = 0;
-    if (status === 'burdened') speedPenalty = Math.min(10, Math.max(preEncumbranceSpeed - 5, 0));
-    else if (status === 'overburdened') speedPenalty = Math.max(preEncumbranceSpeed - 5, 0);
+    if (encumbranceEnabled) {
+      if (status === 'burdened') speedPenalty = Math.min(10, Math.max(preEncumbranceSpeed - 5, 0));
+      else if (status === 'overburdened') speedPenalty = Math.max(preEncumbranceSpeed - 5, 0);
+    }
     
     const finalSpeed = status === 'unburdened' ? preEncumbranceSpeed : Math.max(preEncumbranceSpeed - speedPenalty, 5);
     
-    return { rating, totalEV, totalWeight, status, speedPenalty, preEncumbranceSpeed, finalSpeed };
-  }, [char?.speed, char?.speedBonus, char?.equippedSpeedItemIds, char?.inventory, char?.attributes?.str?.isPrime, char?.attributes?.con?.isPrime, memoizedAttributeTotals.str, normalizeItemStatBonusesStatic]);
+    return { rating, totalEV, totalWeight, inventoryEV, inventoryWeight, coinEV, coinWeight, status, speedPenalty, preEncumbranceSpeed, finalSpeed, encumbranceEnabled };
+  }, [char?.speed, char?.speedBonus, char?.equippedSpeedItemIds, char?.inventory, char?.attributes?.str?.isPrime, char?.attributes?.con?.isPrime, char?.moneyGP, char?.includeCoinWeight, char?.encumbranceEnabled, memoizedAttributeTotals.str, normalizeItemStatBonusesStatic]);
 
   // Memoized AC calculation
   const memoizedAC = useMemo(() => {
@@ -2180,6 +2257,75 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     
     return { categories, itemCategories };
   }, [char?.inventory]);
+
+  // Helper to get container info (contents, capacity used, etc.)
+  const getContainerInfo = useCallback((containerId: number) => {
+    if (!char) return { items: [], itemCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false };
+    
+    const container = (char.inventory || []).find(it => it.id === containerId);
+    if (!container || !container.isContainer) return { items: [], itemCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false, storedCoinsGP: 0, storedCoinsWeight: 0 };
+    
+    const containedItems = (char.inventory || []).filter(it => it.storedInId === containerId);
+    const itemCount = containedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+    const itemsWeight = containedItems.reduce((sum, it) => sum + ((Number(it.weightPer) || 0) * (Number(it.quantity) || 1)), 0);
+    
+    // Calculate stored coins weight (16 coins = 1 lb, treating GP as coin count)
+    const storedCoinsGP = Number(container.storedCoinsGP) || 0;
+    const storedCoinsWeight = storedCoinsGP / 16;
+    const totalWeight = itemsWeight + storedCoinsWeight;
+    
+    return {
+      items: containedItems,
+      itemCount,
+      totalWeight,
+      capacity: Number(container.containerCapacity) || 0,
+      maxWeight: Number(container.containerMaxWeight) || 0,
+      isMagical: !!container.isMagicalContainer,
+      storedCoinsGP,
+      storedCoinsWeight
+    };
+  }, [char]);
+
+  // Helper to get available containers for an item
+  const getAvailableContainers = useCallback((item: InventoryItem | null) => {
+    if (!char || !item) return [];
+    
+    const itemEV = Number(item.ev) || 0;
+    const itemWeight = (Number(item.weightPer) || 0) * (Number(item.quantity) || 1);
+    
+    return (char.inventory || [])
+      .filter(container => {
+        if (!container.isContainer) return false;
+        if (container.id === item.id) return false; // Can't store in itself
+        
+        const info = getContainerInfo(container.id);
+        
+        if (container.isMagicalContainer) {
+          // Magical container: check weight limit
+          const maxWeight = Number(container.containerMaxWeight) || 0;
+          const remainingWeight = maxWeight - info.totalWeight;
+          return itemWeight <= remainingWeight;
+        } else {
+          // Normal container: check capacity and EV rule
+          const capacity = Number(container.containerCapacity) || 0;
+          const itemQty = Number(item.quantity) || 1;
+          
+          // Item EV must be less than capacity
+          if (itemEV >= capacity) return false;
+          
+          // Must have room for the items
+          if (info.itemCount + itemQty > capacity) return false;
+          
+          return true;
+        }
+      })
+      .map(container => ({
+        id: container.id,
+        name: container.name,
+        isMagical: !!container.isMagicalContainer,
+        info: getContainerInfo(container.id)
+      }));
+  }, [char, getContainerInfo]);
 
   const sortedAttacks = useMemo(() => 
     (char?.attacks || []).slice().sort((a, b) => {
@@ -2524,6 +2670,14 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemIsWeapon(false);
       setItemIsAmmo(false);
       setItemIsPotion(false);
+      
+      // Reset container fields
+      setItemIsContainer(false);
+      setItemContainerCapacity('');
+      setItemIsMagicalContainer(false);
+      setItemContainerMaxWeight('');
+      setItemStoredInId(null);
+      
       setItemWeaponType('melee');
       setItemWeaponMelee(true);
       setItemWeaponRanged(false);
@@ -2580,6 +2734,16 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemIsWeapon(!!editModal.item?.isWeapon);
       setItemIsAmmo(!!editModal.item?.isAmmo);
       setItemIsPotion(!!editModal.item?.isPotion);
+      
+      // Load container fields
+      setItemIsContainer(!!editModal.item?.isContainer);
+      const containerCap = Number(editModal.item?.containerCapacity) || 0;
+      setItemContainerCapacity(containerCap === 0 ? '' : String(containerCap));
+      setItemIsMagicalContainer(!!editModal.item?.isMagicalContainer);
+      const containerMaxWt = Number(editModal.item?.containerMaxWeight) || 0;
+      setItemContainerMaxWeight(containerMaxWt === 0 ? '' : String(containerMaxWt));
+      setItemStoredInId(editModal.item?.storedInId || null);
+      
       setItemWeaponType(editModal.item?.weaponType || 'melee');
       setItemWeaponMelee(!!(editModal.item?.weaponMelee ?? ((editModal.item?.weaponType || 'melee') === 'melee')));
       setItemWeaponRanged(!!(editModal.item?.weaponRanged ?? ((editModal.item?.weaponType || 'melee') === 'ranged')));
@@ -6719,6 +6883,14 @@ if (editModal.type === 'acTracking' && char) {
                 </button>
               </div>
               <div className="text-2xl">{char.moneyGP.toFixed(2)} GP</div>
+              {/* Coin weight/EV display - only show when included in totals */}
+              {char.includeCoinWeight && (
+                <div className="text-sm text-gray-400 mt-2">
+                  <span>Coin Weight: {memoizedEncumbrance.coinWeight.toFixed(2)} lb</span>
+                  <span className="mx-2">•</span>
+                  <span>Coin EV: {memoizedEncumbrance.coinEV.toFixed(1)}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between">
@@ -6854,6 +7026,151 @@ if (editModal.type === 'acTracking' && char) {
                                       </div>
                                     )}
 
+                                    {/* Container Contents */}
+                                    {item.isContainer && (() => {
+                                      const info = getContainerInfo(item.id);
+                                      
+                                      // Get items that could be added to this container
+                                      const availableItems = (char.inventory || []).filter(invItem => {
+                                        if (invItem.isContainer) return false; // Can't put containers in containers
+                                        if (invItem.storedInId) return false; // Already in a container
+                                        if (invItem.id === item.id) return false;
+                                        
+                                        const itemEV = Number(invItem.ev) || 0;
+                                        const itemWeight = (Number(invItem.weightPer) || 0) * (Number(invItem.quantity) || 1);
+                                        
+                                        if (item.isMagicalContainer) {
+                                          // Check weight limit
+                                          const maxWeight = Number(item.containerMaxWeight) || Infinity;
+                                          return (info.totalWeight + itemWeight) <= maxWeight;
+                                        } else {
+                                          // Check capacity and EV rule
+                                          const capacity = Number(item.containerCapacity) || 0;
+                                          if (capacity === 0) return true; // Unlimited
+                                          if (itemEV >= capacity) return false;
+                                          const itemQty = Number(invItem.quantity) || 1;
+                                          return (info.itemCount + itemQty) <= capacity;
+                                        }
+                                      });
+                                      
+                                      return (
+                                        <div className="text-xs text-gray-200 mb-3 bg-gray-800 p-2 rounded">
+                                          <div className="text-gray-400 font-semibold mb-1">
+                                            📦 Container {item.isMagicalContainer ? '(Magical)' : ''}
+                                          </div>
+                                          <div className="text-gray-300 mb-2">
+                                            {item.isMagicalContainer 
+                                              ? `${info.totalWeight.toFixed(1)} / ${info.maxWeight || '∞'} lbs used`
+                                              : `${info.itemCount} / ${info.capacity || '∞'} items`
+                                            }
+                                          </div>
+                                          
+                                          {/* Coin display for magical containers (no button, managed from wallet) */}
+                                          {item.isMagicalContainer && info.storedCoinsGP > 0 && (
+                                            <div className="mb-2 text-yellow-400">
+                                              💰 {info.storedCoinsGP} GP ({info.storedCoinsWeight.toFixed(2)} lb)
+                                            </div>
+                                          )}
+                                          
+                                          {/* Add item dropdown */}
+                                          {availableItems.length > 0 && (
+                                            <div className="mb-2">
+                                              <select
+                                                className="w-full p-1 bg-gray-700 rounded text-white text-xs"
+                                                value=""
+                                                onChange={(e) => {
+                                                  e.stopPropagation();
+                                                  const itemId = Number(e.target.value);
+                                                  if (!itemId) return;
+                                                  
+                                                  // Add item to container
+                                                  updateChar({
+                                                    inventory: char.inventory.map(i => 
+                                                      i.id === itemId ? { ...i, storedInId: item.id } : i
+                                                    )
+                                                  });
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                              >
+                                                <option value="">+ Add item to container...</option>
+                                                {availableItems.map(ai => (
+                                                  <option key={ai.id} value={ai.id}>
+                                                    {ai.name} {ai.quantity > 1 ? `×${ai.quantity}` : ''} ({((Number(ai.weightPer) || 0) * (ai.quantity || 1)).toFixed(1)} lb)
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          )}
+                                          
+                                          {info.items.length > 0 ? (
+                                            <div className="space-y-1">
+                                              <div className="text-gray-400">Contains:</div>
+                                              {info.items.map(ci => (
+                                                <div key={ci.id} className="ml-2 flex items-center justify-between gap-2">
+                                                  <span className="text-gray-300">
+                                                    • {ci.name} {ci.quantity > 1 ? `×${ci.quantity}` : ''} 
+                                                    <span className="text-gray-500 ml-1">
+                                                      ({((Number(ci.weightPer) || 0) * (ci.quantity || 1)).toFixed(1)} lb)
+                                                    </span>
+                                                  </span>
+                                                  <button
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      if (ci.quantity > 1) {
+                                                        // Split: create new item with qty 1 outside container, reduce original by 1
+                                                        const newItem = {
+                                                          ...ci,
+                                                          id: Date.now(),
+                                                          quantity: 1,
+                                                          storedInId: undefined
+                                                        };
+                                                        updateChar({
+                                                          inventory: [
+                                                            ...char.inventory.map(i => 
+                                                              i.id === ci.id ? { ...i, quantity: i.quantity - 1 } : i
+                                                            ),
+                                                            newItem
+                                                          ]
+                                                        });
+                                                      } else {
+                                                        // Just remove from container
+                                                        updateChar({
+                                                          inventory: char.inventory.map(i => 
+                                                            i.id === ci.id ? { ...i, storedInId: undefined } : i
+                                                          )
+                                                        });
+                                                      }
+                                                    }}
+                                                    className="p-0.5 bg-red-600 rounded hover:bg-red-700 flex-shrink-0"
+                                                    title="Remove one from container"
+                                                  >
+                                                    <Minus size={12} />
+                                                  </button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            !item.isMagicalContainer && <div className="text-gray-500 italic">Empty</div>
+                                          )}
+                                          {item.isMagicalContainer && info.items.length === 0 && info.storedCoinsGP === 0 && (
+                                            <div className="text-gray-500 italic">Empty</div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Stored In indicator */}
+                                    {item.storedInId && (() => {
+                                      const container = (char.inventory || []).find(c => c.id === item.storedInId);
+                                      if (!container) return null;
+                                      return (
+                                        <div className="text-xs text-blue-400 mb-3">
+                                          📦 Stored in: {container.name}
+                                          {container.isMagicalContainer && ' (magical - weight not counted)'}
+                                        </div>
+                                      );
+                                    })()}
+
                                     {/* Stat Bonuses */}
                                     {item.hasAttrBonus && (() => {
                                       const bonuses = Array.isArray(item.attrBonuses) 
@@ -6875,8 +7192,14 @@ if (editModal.type === 'acTracking' && char) {
                                       );
                                     })()}
 
-                                    {/* Quantity Controls */}
+                                    {/* Quantity Controls - hide stepper for containers */}
                                     <div className="flex items-center justify-between gap-4 pt-2">
+                                      {item.isContainer ? (
+                                        <div className="flex items-center gap-2 text-sm text-gray-400">
+                                          <span>Qty: {item.quantity}</span>
+                                          <span className="text-xs">(use edit to remove)</span>
+                                        </div>
+                                      ) : (
                                       <div className="flex items-center gap-2">
                                         <button 
                                           onClick={(e) => {
@@ -6913,6 +7236,7 @@ if (editModal.type === 'acTracking' && char) {
                                           <Plus size={14} />
                                         </button>
                                       </div>
+                                      )}
                                       <div className="text-sm text-gray-300">
                                         <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
                                         <span className="font-semibold text-white">{Number(item.weightPer || 0).toFixed(2)}</span> lb
@@ -7688,8 +8012,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
               {editModal.type === 'inventoryInfo' && (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-300">
+                    The <span className="font-semibold text-white">Wallet</span> will track how many coins you have and subtract based on Gold Coins being the default. If you subtract 10 silver coins it will remove 1 gold coin etc. If you play with coins included in weight and EV, then make sure you check the box in your wallet.
+                  </p>
+                  <p className="text-sm text-gray-300">
                     To add an item, please click <span className="font-semibold text-white">+ Add Item</span>. If you add a number in Worth, you will be able to sell it from your inventory.
                   </p>
+                  <div className="mt-2 p-3 bg-gray-900 rounded">
+                    <p className="text-sm text-gray-300">
+                      <span className="font-semibold text-yellow-400">Tip: Worn Items</span> — If you're wearing an item (armor, shield, weapons, rings, etc.), consider leaving the EV field at 0 since worn items don't count toward encumbrance.
+                    </p>
+                  </div>
                   <p className="text-sm text-gray-300">
                     By clicking <span className="font-semibold text-white">Armor</span> or <span className="font-semibold text-white">Shield</span>, you can add it in AC Tracking for your AC.
                   </p>
@@ -7708,11 +8040,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <p className="text-sm text-gray-300">
                     By clicking <span className="font-semibold text-white">Ammo</span>, this item can be linked to a ranged weapon in your Attack section. When you roll to attack with a ranged weapon and a specific ammo chosen, that ammo will decrease by 1.
                   </p>
-                  <div className="mt-2 p-3 bg-gray-900 rounded">
-                    <p className="text-sm text-gray-300">
-                      <span className="font-semibold text-yellow-400">Tip: Negative Weight</span> — At times you may obtain a magical item that allows you to carry more than it weighs, such as a Bag of Holding. For example, if a bag weighs 5 lbs but can carry 50 lbs, subtract the carrying capacity from its weight and enter <span className="font-semibold text-white">-45 lbs</span>. This will subtract from the weight of other items in your inventory as if they are being held inside it.
-                    </p>
-                  </div>
+                  <p className="text-sm text-gray-300">
+                    By clicking <span className="font-semibold text-white">Potion</span>, this item will be categorized with Magical Items & Potions for easy organization.
+                  </p>
+                  <p className="text-sm text-gray-300">
+                    By clicking <span className="font-semibold text-white">Container (Backpack/Pouch)</span>, this item can hold other items. Items inside a container don't count toward your EV encumbrance—only the container's EV counts. For normal containers, set a capacity (max items) and items with EV less than the capacity can be stored. For magical containers, set a max weight—the contents' weight won't count toward your total either. You can also store coins in magical containers via your Wallet.
+                  </p>
                 </div>
               )}
 
@@ -7768,6 +8101,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
               {editModal.type === 'encumbranceInfo' && (
                 <div className="space-y-3">
+                  {/* Encumbrance enabled checkbox */}
+                  <div className="flex justify-end">
+                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={char.encumbranceEnabled ?? true}
+                        onChange={(e) => updateChar({ encumbranceEnabled: e.target.checked })}
+                        className="w-4 h-4"
+                      />
+                      Use Encumbrance Rules
+                    </label>
+                  </div>
+                  
+                  {!(char.encumbranceEnabled ?? true) && (
+                    <div className="bg-yellow-900/30 border border-yellow-600/50 rounded p-2 text-sm text-yellow-300">
+                      Encumbrance is disabled. Burdened/Overburdened penalties will not apply.
+                    </div>
+                  )}
+                  
                   {(() => {
                     const er = getEncumbranceRating();
                     const total = getInventoryTotalEV();
@@ -8938,10 +9290,129 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
               {editModal.type === 'wallet' && (
                 <div>
-                  <div className="text-sm text-gray-400 mb-3">
-                    Current: <span className="font-bold text-white">{char.moneyGP.toFixed(2)} GP</span>
-                    <div className="text-xs mt-1">Conversion: 10 CP = 1 SP, 10 SP = 1 GP, 10 GP = 1 PP</div>
+                  {/* Include in total checkbox - upper right */}
+                  <div className="flex justify-end mb-3">
+                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={char.includeCoinWeight ?? false}
+                        onChange={(e) => updateChar({ includeCoinWeight: e.target.checked })}
+                        className="w-4 h-4"
+                      />
+                      Include in Total Weight/EV
+                    </label>
                   </div>
+
+                  <div className="text-lg text-gray-300 mb-4">
+                    Current: <span className="font-bold text-white text-2xl">{char.moneyGP.toFixed(2)} GP</span>
+                    <div className="text-sm text-gray-400 mt-2">
+                      Coin Weight: {memoizedEncumbrance.coinWeight.toFixed(2)} lb • Coin EV: {memoizedEncumbrance.coinEV.toFixed(1)}
+                    </div>
+                    <div className="text-xs mt-2 text-gray-500">Conversion: 10 CP = 1 SP, 10 SP = 1 GP, 10 GP = 1 PP</div>
+                    <div className="text-xs text-gray-500">Weight: 16 coins = 1 lb, 160 coins = 1 EV</div>
+                  </div>
+                  
+                  {/* Coins stored in magical containers */}
+                  {(() => {
+                    const magicalContainers = (char.inventory || []).filter(c => c.isContainer && c.isMagicalContainer);
+                    if (magicalContainers.length === 0) return null;
+                    
+                    const totalStoredCoins = Math.round(magicalContainers.reduce((sum, c) => sum + (Number(c.storedCoinsGP) || 0), 0) * 100) / 100;
+                    const selectedContainerId = walletForm.selectedCoinContainer;
+                    const selectedContainer = selectedContainerId ? magicalContainers.find(c => c.id === selectedContainerId) : null;
+                    
+                    // Calculate limits for selected container
+                    let maxCoinsInBag = 0;
+                    let currentCoinsInBag = 0;
+                    let totalAvailableCoins = Math.round(char.moneyGP * 100) / 100;
+                    
+                    if (selectedContainer) {
+                      const info = getContainerInfo(selectedContainer.id);
+                      currentCoinsInBag = Math.round((Number(selectedContainer.storedCoinsGP) || 0) * 100) / 100;
+                      const maxWeight = Number(selectedContainer.containerMaxWeight) || Infinity;
+                      const weightUsedByItems = info.totalWeight - info.storedCoinsWeight;
+                      const availableWeightForCoins = maxWeight === Infinity ? Infinity : (maxWeight - weightUsedByItems);
+                      maxCoinsInBag = maxWeight === Infinity ? Math.round((char.moneyGP + currentCoinsInBag) * 100) / 100 : Math.floor(availableWeightForCoins * 16);
+                      totalAvailableCoins = Math.round((char.moneyGP + currentCoinsInBag) * 100) / 100;
+                    }
+                    
+                    const sliderMax = selectedContainer ? Math.round(Math.min(maxCoinsInBag, totalAvailableCoins) * 100) / 100 : 0;
+                    
+                    return (
+                      <div className="mb-4 p-3 bg-gray-900 rounded">
+                        <div className="text-sm text-gray-400 mb-2">💰 Store Coins in Magical Container</div>
+                        
+                        {/* Container dropdown */}
+                        <select
+                          value={selectedContainerId || ''}
+                          onChange={(e) => {
+                            const newId = e.target.value ? Number(e.target.value) : null;
+                            updateWalletForm({ selectedCoinContainer: newId });
+                          }}
+                          className="w-full p-2 bg-gray-700 rounded text-white mb-3"
+                        >
+                          <option value="">Select a magical container...</option>
+                          {magicalContainers.map(c => {
+                            const storedCoins = Math.round((Number(c.storedCoinsGP) || 0) * 100) / 100;
+                            return (
+                              <option key={c.id} value={c.id}>
+                                {c.name} ({storedCoins} GP stored)
+                              </option>
+                            );
+                          })}
+                        </select>
+                        
+                        {/* Slider when container selected */}
+                        {selectedContainer && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-xs text-gray-400">
+                              <span>Wallet: {char.moneyGP.toFixed(2)} GP</span>
+                              <span>In {selectedContainer.name}: {currentCoinsInBag.toFixed(2)} GP</span>
+                            </div>
+                            
+                            <input
+                              type="range"
+                              min={0}
+                              max={sliderMax}
+                              step={0.01}
+                              value={currentCoinsInBag}
+                              onInput={(e) => {
+                                const target = e.target as HTMLInputElement;
+                                const newCoinsInBag = Math.round(Number(target.value) * 100) / 100;
+                                const diff = Math.round((newCoinsInBag - currentCoinsInBag) * 100) / 100;
+                                
+                                // Use functional update to avoid stale closure issues
+                                updateChar({
+                                  moneyGP: Math.round((char.moneyGP - diff) * 100) / 100,
+                                  inventory: char.inventory.map(i => 
+                                    i.id === selectedContainerId ? { ...i, storedCoinsGP: newCoinsInBag } : i
+                                  )
+                                });
+                              }}
+                              className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                              style={{ accentColor: '#eab308' }}
+                            />
+                            
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-500">0 GP in bag</span>
+                              <span className="text-yellow-400 font-semibold">{currentCoinsInBag.toFixed(2)} GP</span>
+                              <span className="text-gray-500">{sliderMax.toFixed(2)} GP max</span>
+                            </div>
+                            
+                            <div className="text-xs text-gray-500 mt-1">
+                              Weight in bag: {(currentCoinsInBag / 16).toFixed(2)} lb
+                            </div>
+                          </div>
+                        )}
+                        
+                        {totalStoredCoins > 0 && (
+                          <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-700">
+                            Total in all bags: {totalStoredCoins.toFixed(2)} GP ({(totalStoredCoins / 16).toFixed(2)} lb) — not counted in your weight/EV
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
@@ -9196,9 +9667,116 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           />
                           Potion
                         </label>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsContainer}
+                            onChange={(e) => setItemIsContainer(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Container (Backpack/Pouch)
+                        </label>
                       </>
                     )}
                   </div>
+
+                  {/* Container Settings */}
+                  {itemIsContainer && (
+                    <div className="bg-gray-900 border border-gray-700 rounded p-3 mb-3">
+                      <div className="font-bold text-gray-200 mb-2">Container Settings</div>
+                      
+                      <label className="flex items-center gap-2 text-sm text-gray-200 mb-3">
+                        <input
+                          type="checkbox"
+                          checked={itemIsMagicalContainer}
+                          onChange={(e) => setItemIsMagicalContainer(e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        Magical Container (contents weight doesn't count)
+                      </label>
+
+                      {!itemIsMagicalContainer ? (
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Capacity (max items)</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={itemContainerCapacity}
+                            onChange={(e) => setItemContainerCapacity(e.target.value.replace(/[^0-9]/g, ''))}
+                            placeholder="8"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Items with EV less than capacity can be stored. E.g., capacity 8 holds items with EV ≤ 7.
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Max Weight (lbs)</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={itemContainerMaxWeight}
+                            onChange={(e) => setItemContainerMaxWeight(e.target.value.replace(/[^0-9.]/g, ''))}
+                            placeholder="140"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Items can be stored if their weight fits. Use common sense for physical size.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Stored In Container dropdown - always show for non-containers */}
+                  {!itemIsContainer && (() => {
+                    const currentItem = editModal.item || { 
+                      id: 0, 
+                      ev: parseFloat(itemForm.ev) || 0, 
+                      weightPer: parseFloat(itemForm.weightPer) || 0,
+                      quantity: itemForm.quantity || 1
+                    };
+                    const availableContainers = getAvailableContainers(currentItem as InventoryItem);
+                    const currentContainer = (char?.inventory || []).find(c => c.id === itemStoredInId);
+                    const allContainers = (char?.inventory || []).filter(c => c.isContainer && c.id !== currentItem.id);
+                    
+                    return (
+                      <div className="mb-3">
+                        <label className="block text-sm text-gray-400 mb-1">Stored In</label>
+                        <select
+                          value={itemStoredInId || ''}
+                          onChange={(e) => setItemStoredInId(e.target.value ? Number(e.target.value) : null)}
+                          className="w-full p-2 bg-gray-700 rounded text-white"
+                        >
+                          <option value="">Not in a container</option>
+                          {availableContainers.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} {c.isMagical 
+                                ? `(${c.info.totalWeight.toFixed(1)}/${c.info.maxWeight || '∞'} lbs)`
+                                : `(${c.info.itemCount}/${c.info.capacity} items)`
+                              }
+                            </option>
+                          ))}
+                          {/* Show current container even if it wouldn't normally be available (e.g., now full) */}
+                          {currentContainer && !availableContainers.some(c => c.id === currentContainer.id) && (
+                            <option key={currentContainer.id} value={currentContainer.id}>
+                              {currentContainer.name} (current)
+                            </option>
+                          )}
+                        </select>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {allContainers.length === 0 
+                            ? "No containers in inventory. Create a container item first."
+                            : availableContainers.length === 0 && !currentContainer
+                              ? "No containers can hold this item (too heavy or high EV)."
+                              : `Items in containers don't count toward EV.${itemStoredInId && currentContainer?.isMagicalContainer ? " Weight also doesn't count (magical)." : ""}`
+                          }
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                     {itemIsMagicCasting && (
                       <div className="bg-gray-900 border border-gray-700 rounded p-3 mb-3">
@@ -9630,6 +10208,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         isWeapon: !!itemIsWeapon,
                         isAmmo: !!itemIsAmmo,
                         isPotion: !!itemIsPotion,
+                        // Container fields
+                        isContainer: !!itemIsContainer,
+                        containerCapacity: itemIsContainer && !itemIsMagicalContainer ? (Number(itemContainerCapacity) || 0) : 0,
+                        isMagicalContainer: itemIsContainer ? !!itemIsMagicalContainer : false,
+                        containerMaxWeight: itemIsContainer && itemIsMagicalContainer ? (Number(itemContainerMaxWeight) || 0) : 0,
+                        storedInId: !itemIsContainer ? (itemStoredInId || null) : null,
                         weaponType: itemIsWeapon ? ((itemWeaponRanged && !itemWeaponMelee) ? 'ranged' : 'melee') : undefined,
                         weaponMelee: itemIsWeapon ? !!itemWeaponMelee : false,
                         weaponRanged: itemIsWeapon ? !!itemWeaponRanged : false,
@@ -9650,9 +10234,17 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         magicCastingDescription: String(itemMagicCastingDescription || ''),
                         magicCastingCapacity: (itemIsMagicCasting && !itemIsGrimoire) ? (Number(itemMagicCastingCapacity) || 0) : 0
                       };
-                      const newInv = editModal.type === 'newItem' ? 
+                      
+                      // If this item was a container and is being deleted/changed, clear storedInId from items inside
+                      let newInv = editModal.type === 'newItem' ? 
                         [...char.inventory, newItem] :
                         char.inventory.map(i => i.id === newItem.id ? newItem : i);
+                      
+                      // If container was removed, clear items that were stored in it
+                      if (editModal.type === 'editItem' && editModal.item?.isContainer && !newItem.isContainer) {
+                        newInv = newInv.map(i => i.storedInId === newItem.id ? { ...i, storedInId: null } : i);
+                      }
+                      
                       const nextMagicItems = syncMagicItemForInventoryItem(newItem, char.magicItems || []);
                       // Sync grimoires to inventory items (a grimoire is just a magic-casting inventory item)
                       const linkedId = `inv-${String(newItem.id)}`;
@@ -9688,14 +10280,27 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   {editModal.type === 'editItem' && (
                     <button
                       onClick={() => {
-                        const invFiltered = char.inventory.filter(i => i.id !== editModal.item.id);
-                        const miFiltered = (char.magicItems || []).filter(mi => String(mi.linkedInventoryItemId) !== String(editModal.item.id) && String(mi.id) !== `linked-${String(editModal.item.id)}`);
-                        const linkedId = `inv-${String(editModal.item.id)}`;
-                        const grimFiltered = (char.grimoires || []).filter(g => String(g.linkedInventoryItemId) !== String(editModal.item.id) && String(g.id) !== linkedId);
+                        const deletedItem = editModal.item;
+                        
+                        // If deleting a container, clear storedInId from items inside
+                        let invFiltered = char.inventory.filter(i => i.id !== deletedItem.id);
+                        if (deletedItem.isContainer) {
+                          invFiltered = invFiltered.map(i => i.storedInId === deletedItem.id ? { ...i, storedInId: undefined } : i);
+                        }
+                        
+                        // If deleting a magical container with coins, return coins to wallet
+                        let newMoneyGP = char.moneyGP;
+                        if (deletedItem.isContainer && deletedItem.isMagicalContainer && deletedItem.storedCoinsGP) {
+                          newMoneyGP = char.moneyGP + (Number(deletedItem.storedCoinsGP) || 0);
+                        }
+                        
+                        const miFiltered = (char.magicItems || []).filter(mi => String(mi.linkedInventoryItemId) !== String(deletedItem.id) && String(mi.id) !== `linked-${String(deletedItem.id)}`);
+                        const linkedId = `inv-${String(deletedItem.id)}`;
+                        const grimFiltered = (char.grimoires || []).filter(g => String(g.linkedInventoryItemId) !== String(deletedItem.id) && String(g.id) !== linkedId);
                         const speedFiltered = (char.equippedSpeedItemIds && Array.isArray(char.equippedSpeedItemIds))
-                          ? char.equippedSpeedItemIds.filter(x => String(x) !== String(editModal.item.id))
+                          ? char.equippedSpeedItemIds.filter(x => String(x) !== String(deletedItem.id))
                           : [];
-                        updateChar({ inventory: invFiltered, magicItems: miFiltered, grimoires: grimFiltered, equippedSpeedItemIds: speedFiltered });
+                        updateChar({ inventory: invFiltered, magicItems: miFiltered, grimoires: grimFiltered, equippedSpeedItemIds: speedFiltered, moneyGP: newMoneyGP });
                         setEditModal(null);
                       }}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mt-2"
@@ -9917,13 +10522,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <button
                           onClick={() => {
                             const worthGP = toGP(worthAmount, worthUnit);
-                            const nextInv = (char.inventory || [])
+                            let nextInv = (char.inventory || [])
                               .map(i =>
                                 i.id === sellItem.id
                                   ? { ...i, quantity: Math.max(0, (i.quantity || 0) - 1) }
                                   : i
                               )
                               .filter(i => (i.quantity || 0) > 0);
+                            
+                            // If selling a container, clear storedInId from items inside
+                            const itemDeleted = !nextInv.some(i => i.id === sellItem.id);
+                            if (itemDeleted && sellItem.isContainer) {
+                              nextInv = nextInv.map(i => i.storedInId === sellItem.id ? { ...i, storedInId: undefined } : i);
+                            }
+                            
+                            // If selling a magical container with coins, return coins to wallet
+                            let coinsReturned = 0;
+                            if (itemDeleted && sellItem.isContainer && sellItem.isMagicalContainer && sellItem.storedCoinsGP) {
+                              coinsReturned = Number(sellItem.storedCoinsGP) || 0;
+                            }
 
                             const updated = nextInv.find(i => String(i.id) === String(sellItem.id));
                             let nextMagicItems = char.magicItems || [];
@@ -9936,7 +10553,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             updateChar({
                               inventory: nextInv,
                               magicItems: nextMagicItems,
-                              moneyGP: (Number(char.moneyGP) || 0) + worthGP
+                              moneyGP: (Number(char.moneyGP) || 0) + worthGP + coinsReturned
                             });
                             setEditModal(null);
                           }}
