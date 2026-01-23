@@ -52,6 +52,7 @@ interface Attack {
   isFavorite: boolean;
   weaponId?: number;
   effectIds?: number[];
+  appliedEffectItemIds?: (string | number)[];
 }
 
 interface InventoryItem {
@@ -67,8 +68,10 @@ interface InventoryItem {
   isMagicCasting: boolean;
   isGrimoire: boolean;
   isAmmo: boolean;
+  isPotion: boolean;
   hasAttrBonus: boolean;
   attrBonuses: { attr: string; value: number }[];
+  effects?: ItemEffect[];
   weaponDamage?: string;
   weaponType?: string;
   acBonus?: number;
@@ -78,6 +81,16 @@ interface InventoryItem {
   effectToHitBonus?: number;
   effectDamageBonus?: number;
   effectDescription?: string;
+}
+
+interface ItemEffect {
+  id?: string;
+  kind?: 'attack' | 'ac';
+  miscToHit?: number;
+  miscDamage?: number;
+  magicToHit?: number;
+  magicDamage?: number;
+  ac?: number;
 }
 
 interface Spell {
@@ -909,50 +922,28 @@ const ensureEquippedEffectShape = (char: Character | null | undefined): Equipped
 /** Normalize item effects to a consistent format */
 const normalizeItemEffects = (item: InventoryItem | null | undefined): NormalizedEffect[] => {
   // Effects are attached to the inventory item. An item can have multiple effects.
-  // Supported shape (current):
-  //   { id, kind: 'attack' | 'ac', miscToHit, miscDamage, magicToHit, magicDamage, ac }
-  // Back-compat: earlier drafts used toHit/damage or booster-style fields.
-  const raw = Array.isArray((item as any)?.effects) ? (item as any).effects : [];
+  // Shape: { id, kind: 'attack' | 'ac', miscToHit, miscDamage, magicToHit, magicDamage, ac }
+  const raw = Array.isArray(item?.effects) ? item.effects : [];
 
-  const normalized: NormalizedEffect[] = raw.map((e: any, idx: number) => {
+  const normalized: NormalizedEffect[] = raw.map((e, idx: number) => {
     if (!e) return null;
 
     const id = e.id ?? `${item?.id || 'item'}-eff-${idx}`;
-
-    // Back-compat: toHit/damage => miscToHit/miscDamage
-    const legacyToHit = (e.toHit !== undefined) ? (Number(e.toHit) || 0) : 0;
-    const legacyDmg = (e.damage !== undefined) ? (Number(e.damage) || 0) : 0;
-
     const kind: 'attack' | 'ac' = e.kind === 'ac' ? 'ac' : 'attack';
 
     return {
       id: String(id),
       kind,
-      miscToHit: Number(e.miscToHit ?? legacyToHit) || 0,
-      miscDamage: Number(e.miscDamage ?? legacyDmg) || 0,
+      miscToHit: Number(e.miscToHit) || 0,
+      miscDamage: Number(e.miscDamage) || 0,
       magicToHit: Number(e.magicToHit) || 0,
       magicDamage: Number(e.magicDamage) || 0,
       ac: Number(e.ac) || 0
     };
   }).filter(Boolean) as NormalizedEffect[];
 
-  // Back-compat: older "isBooster/booster*" style
-  if (!normalized.length && (item as any)?.isBooster) {
-    return [{
-      id: `legacy-${item?.id}`,
-      kind: 'attack',
-      miscToHit: Number((item as any).boosterToHit) || 0,
-      miscDamage: Number((item as any).boosterDamage) || 0,
-      magicToHit: 0,
-      magicDamage: 0,
-      ac: Number((item as any).boosterAC) || 0
-    }];
-  }
-
-  
   // If the item uses the Attribute Bonus system to grant AC, expose it as an AC effect
   // so it can be equipped via AC Tracking -> Defense Items.
-  // Check the new attrBonuses array first, then fall back to legacy single fields
   if (item?.hasAttrBonus) {
     const bonusesArr = Array.isArray(item.attrBonuses) ? item.attrBonuses : [];
     const acBonus = bonusesArr.find(b => String(b?.attr || '').toLowerCase() === 'ac');
@@ -962,16 +953,6 @@ const normalizeItemEffects = (item: InventoryItem | null | undefined): Normalize
         kind: 'ac',
         ac: Number(acBonus.value) || 0
       });
-    } else if (!bonusesArr.length && String((item as any).attrBonusAttr || '').toLowerCase() === 'ac') {
-      // Legacy fallback
-      const v = Number((item as any).attrBonusValue) || 0;
-      if (v !== 0) {
-        normalized.push({
-          id: `attrbonus-ac-${item?.id || 'item'}`,
-          kind: 'ac',
-          ac: v
-        });
-      }
     }
   }
 
@@ -1022,8 +1003,8 @@ interface EffectBonuses {
 /** Sum up all effect bonuses for a given attack */
 const sumEffectBonusesForAttack = (char: Character | null | undefined, attack: Attack | null | undefined): EffectBonuses => {
   const inventory = char?.inventory || [];
-  const selected = Array.isArray((attack as any)?.appliedEffectItemIds)
-    ? (attack as any).appliedEffectItemIds.map((x: any) => String(x))
+  const selected = Array.isArray(attack?.appliedEffectItemIds)
+    ? attack.appliedEffectItemIds.map(x => String(x))
     : [];
   const selectedSet = new Set(selected);
 
@@ -1219,6 +1200,15 @@ function CaCCharacterSheetInner() {
   // Collapsible list states
   const [expandedInventoryIds, setExpandedInventoryIds] = useState({});
   const [expandedSpellLevels, setExpandedSpellLevels] = useState({});
+  // Inventory category expansion state - all expanded by default
+  const [expandedInventoryCategories, setExpandedInventoryCategories] = useState<Record<string, boolean>>({
+    armorShield: true,
+    weaponsAmmo: true,
+    weaponEffects: true,
+    statBoosting: true,
+    magicPotions: true,
+    uncategorized: true
+  });
 
   // Notes tab editor
   const [noteEditor, setNoteEditor] = useState({
@@ -1265,6 +1255,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     hasEffects: false,
     isWeapon: false,
     isAmmo: false,
+    isPotion: false,
     // Magic casting
     magicCastingDescription: '',
     magicCastingCapacity: 0,
@@ -1280,11 +1271,11 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     weaponType: 'melee',
     weaponMelee: true,
     weaponRanged: false,
-    weaponToHitMagic: 0,
-    weaponToHitMisc: 0,
-    weaponDamageMagic: 0,
-    weaponDamageMisc: 0,
-    weaponDamageNumDice: 1,
+    weaponToHitMagic: '',
+    weaponToHitMisc: '',
+    weaponDamageMagic: '',
+    weaponDamageMisc: '',
+    weaponDamageNumDice: '',
     weaponDamageDieType: 8
   };
   
@@ -1301,18 +1292,19 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   }, []);
 
   // ===== CONSOLIDATED NEW EFFECT STATE =====
+  // Using strings for numeric inputs to allow empty field while typing
   const defaultNewEffectState = {
-    kind: 'attack',
-    miscToHit: 0,
-    miscDamage: 0,
-    magicToHit: 0,
-    magicDamage: 0,
-    ac: 0
+    kind: 'attack' as 'attack' | 'ac',
+    miscToHit: '',
+    miscDamage: '',
+    magicToHit: '',
+    magicDamage: '',
+    ac: ''
   };
   
   const [newEffect, setNewEffect] = useState(defaultNewEffectState);
   
-  const updateNewEffect = useCallback((updates) => {
+  const updateNewEffect = useCallback((updates: Partial<typeof defaultNewEffectState>) => {
     setNewEffect(prev => ({ ...prev, ...updates }));
   }, []);
   
@@ -1346,12 +1338,41 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Legacy individual setters for backward compatibility during migration
   // These can be removed once all usages are updated
-  const setEquippedArmorIds = useCallback((ids) => updateEquipment({ armorIds: ids }), [updateEquipment]);
-  const setEquippedShieldId = useCallback((id) => updateEquipment({ shieldId: id }), [updateEquipment]);
-  const setEquippedDefenseItemIds = useCallback((ids) => updateEquipment({ defenseItemIds: ids }), [updateEquipment]);
-  const setEquippedSpeedItemIds = useCallback((ids) => updateEquipment({ speedItemIds: ids }), [updateEquipment]);
-  const setAttrEquippedIds = useCallback((ids) => updateEquipment({ attrEquippedIds: ids }), [updateEquipment]);
-  const setAcUseDex = useCallback((val) => updateEquipment({ useDex: val }), [updateEquipment]);
+  const setEquippedArmorIds = useCallback((idsOrFn: string[] | ((prev: string[]) => string[])) => {
+    if (typeof idsOrFn === 'function') {
+      setEquipmentState(prev => ({ ...prev, armorIds: idsOrFn(prev.armorIds) }));
+    } else {
+      updateEquipment({ armorIds: idsOrFn });
+    }
+  }, [updateEquipment]);
+  
+  const setEquippedShieldId = useCallback((id: string) => updateEquipment({ shieldId: id }), [updateEquipment]);
+  
+  const setEquippedDefenseItemIds = useCallback((idsOrFn: string[] | ((prev: string[]) => string[])) => {
+    if (typeof idsOrFn === 'function') {
+      setEquipmentState(prev => ({ ...prev, defenseItemIds: idsOrFn(prev.defenseItemIds) }));
+    } else {
+      updateEquipment({ defenseItemIds: idsOrFn });
+    }
+  }, [updateEquipment]);
+  
+  const setEquippedSpeedItemIds = useCallback((idsOrFn: string[] | ((prev: string[]) => string[])) => {
+    if (typeof idsOrFn === 'function') {
+      setEquipmentState(prev => ({ ...prev, speedItemIds: idsOrFn(prev.speedItemIds) }));
+    } else {
+      updateEquipment({ speedItemIds: idsOrFn });
+    }
+  }, [updateEquipment]);
+  
+  const setAttrEquippedIds = useCallback((idsOrFn: string[] | ((prev: string[]) => string[])) => {
+    if (typeof idsOrFn === 'function') {
+      setEquipmentState(prev => ({ ...prev, attrEquippedIds: idsOrFn(prev.attrEquippedIds) }));
+    } else {
+      updateEquipment({ attrEquippedIds: idsOrFn });
+    }
+  }, [updateEquipment]);
+  
+  const setAcUseDex = useCallback((val: boolean) => updateEquipment({ useDex: val }), [updateEquipment]);
   
   // Legacy getters for backward compatibility
   const equippedArmorIds = equipmentState.armorIds;
@@ -1378,6 +1399,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemStatBonuses = itemModal.statBonuses;
   const itemIsWeapon = itemModal.isWeapon;
   const itemIsAmmo = itemModal.isAmmo;
+  const itemIsPotion = itemModal.isPotion;
   const itemWeaponType = itemModal.weaponType;
   const itemWeaponMelee = itemModal.weaponMelee;
   const itemWeaponRanged = itemModal.weaponRanged;
@@ -1405,12 +1427,14 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemStatBonuses = useCallback((v) => updateItemModal({ statBonuses: typeof v === 'function' ? v(itemModal.statBonuses) : v }), [updateItemModal, itemModal.statBonuses]);
   const setItemIsWeapon = useCallback((v) => updateItemModal({ isWeapon: v }), [updateItemModal]);
   const setItemIsAmmo = useCallback((v) => updateItemModal({ isAmmo: v }), [updateItemModal]);
+  const setItemIsPotion = useCallback((v) => updateItemModal({ isPotion: v }), [updateItemModal]);
   const setItemWeaponType = useCallback((v) => updateItemModal({ weaponType: v }), [updateItemModal]);
   const setItemWeaponMelee = useCallback((v) => updateItemModal({ weaponMelee: v }), [updateItemModal]);
   const setItemWeaponRanged = useCallback((v) => updateItemModal({ weaponRanged: v }), [updateItemModal]);
   const setItemWeaponToHitMagic = useCallback((v) => updateItemModal({ weaponToHitMagic: v }), [updateItemModal]);
   const setItemWeaponToHitMisc = useCallback((v) => updateItemModal({ weaponToHitMisc: v }), [updateItemModal]);
   const setItemWeaponDamageMagic = useCallback((v) => updateItemModal({ weaponDamageMagic: v }), [updateItemModal]);
+
   const setItemWeaponDamageMisc = useCallback((v) => updateItemModal({ weaponDamageMisc: v }), [updateItemModal]);
   const setItemWeaponDamageNumDice = useCallback((v) => updateItemModal({ weaponDamageNumDice: v }), [updateItemModal]);
   const setItemWeaponDamageDieType = useCallback((v) => updateItemModal({ weaponDamageDieType: v }), [updateItemModal]);
@@ -1899,17 +1923,14 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   // These values are cached and only recalculated when their dependencies change
   
   // Helper function for normalizing item stat bonuses (used in memoized calcs)
-  const normalizeItemStatBonusesStatic = useCallback((it) => {
-    const arr = Array.isArray(it?.attrBonuses)
+  const normalizeItemStatBonusesStatic = useCallback((it: InventoryItem | null | undefined): { attr: string; value: number }[] => {
+    if (!it?.attrBonuses) return [];
+    return Array.isArray(it.attrBonuses)
       ? it.attrBonuses
           .filter(b => b && typeof b === 'object')
           .map(b => ({ attr: String(b.attr || '').toLowerCase(), value: Number(b.value) || 0 }))
           .filter(b => b.attr && b.value !== 0)
       : [];
-    if (arr.length) return arr;
-    const legacyAttr = String(it?.attrBonusAttr || '').toLowerCase();
-    const legacyVal = Number(it?.attrBonusValue) || 0;
-    return (legacyAttr && legacyVal !== 0) ? [{ attr: legacyAttr, value: legacyVal }] : [];
   }, []);
 
   // Memoized attribute totals - recalculated only when char data changes
@@ -2100,6 +2121,66 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       (a.name || '').localeCompare(b.name || '')
     ), [char?.inventory]);
 
+  // Categorized inventory for organized display
+  const categorizedInventory = useMemo(() => {
+    const inventory = char?.inventory || [];
+    const sorted = inventory.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    
+    // Define category predicates
+    const isArmorShield = (item: InventoryItem) => item.isArmor || item.isShield;
+    const isWeaponAmmo = (item: InventoryItem) => item.isWeapon || item.isAmmo;
+    const isWeaponEffect = (item: InventoryItem) => (item.effects?.length || 0) > 0;
+    const isStatBoosting = (item: InventoryItem) => item.hasAttrBonus && (item.attrBonuses?.length || 0) > 0;
+    const isMagicPotion = (item: InventoryItem) => item.isMagicCasting || item.isGrimoire || item.isPotion;
+    
+    // Categorize items - items can appear in multiple categories
+    const categories = {
+      armorShield: { name: 'Armor & Shields', items: [] as InventoryItem[], icon: '🛡️' },
+      weaponsAmmo: { name: 'Weapons & Ammo', items: [] as InventoryItem[], icon: '⚔️' },
+      weaponEffects: { name: 'Weapon Effects', items: [] as InventoryItem[], icon: '✨' },
+      statBoosting: { name: 'Stat Boosting', items: [] as InventoryItem[], icon: '📈' },
+      magicPotions: { name: 'Magical Items & Potions', items: [] as InventoryItem[], icon: '🧪' },
+      uncategorized: { name: 'Other Items', items: [] as InventoryItem[], icon: '📦' }
+    };
+    
+    // Track which items belong to which categories for cross-reference display
+    const itemCategories = new Map<number, string[]>();
+    
+    for (const item of sorted) {
+      const cats: string[] = [];
+      
+      if (isArmorShield(item)) {
+        categories.armorShield.items.push(item);
+        cats.push('Armor & Shields');
+      }
+      if (isWeaponAmmo(item)) {
+        categories.weaponsAmmo.items.push(item);
+        cats.push('Weapons & Ammo');
+      }
+      if (isWeaponEffect(item)) {
+        categories.weaponEffects.items.push(item);
+        cats.push('Weapon Effects');
+      }
+      if (isStatBoosting(item)) {
+        categories.statBoosting.items.push(item);
+        cats.push('Stat Boosting');
+      }
+      if (isMagicPotion(item)) {
+        categories.magicPotions.items.push(item);
+        cats.push('Magical Items & Potions');
+      }
+      
+      // If no category, put in uncategorized
+      if (cats.length === 0) {
+        categories.uncategorized.items.push(item);
+      }
+      
+      itemCategories.set(item.id, cats);
+    }
+    
+    return { categories, itemCategories };
+  }, [char?.inventory]);
+
   const sortedAttacks = useMemo(() => 
     (char?.attacks || []).slice().sort((a, b) => {
       const af = !!a.isFavorite;
@@ -2155,22 +2236,18 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return raw.map(x => String(x));
   };
 
-  const normalizeItemStatBonuses = (it) => {
-    // New format: it.attrBonuses = [{ attr: 'str'|'dex'|...|'ac'|'speed', value: number }, ...]
-    const arr = Array.isArray(it?.attrBonuses)
+  const normalizeItemStatBonuses = (it: InventoryItem | null | undefined): { attr: string; value: number }[] => {
+    // Format: it.attrBonuses = [{ attr: 'str'|'dex'|...|'ac'|'speed', value: number }, ...]
+    if (!it?.attrBonuses) return [];
+    return Array.isArray(it.attrBonuses)
       ? it.attrBonuses
           .filter(b => b && typeof b === 'object')
           .map(b => ({ attr: String(b.attr || '').toLowerCase(), value: Number(b.value) || 0 }))
           .filter(b => b.attr && b.value !== 0)
       : [];
-    if (arr.length) return arr;
-    // Legacy fallback
-    const legacyAttr = String(it?.attrBonusAttr || '').toLowerCase();
-    const legacyVal = Number(it?.attrBonusValue) || 0;
-    return (legacyAttr && legacyVal !== 0) ? [{ attr: legacyAttr, value: legacyVal }] : [];
   };
 
-  const getItemAttributeBonus = (attrKey) => {
+  const getItemAttributeBonus = (attrKey: string): number => {
     if (!char) return 0;
     const equipped = getEquippedAttrIds(attrKey);
     if (!equipped.length) return 0;
@@ -2446,21 +2523,23 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
       setItemIsWeapon(false);
       setItemIsAmmo(false);
+      setItemIsPotion(false);
       setItemWeaponType('melee');
       setItemWeaponMelee(true);
       setItemWeaponRanged(false);
-      setItemWeaponToHitMagic(0);
-      setItemWeaponToHitMisc(0);
-      setItemWeaponDamageMagic(0);
-      setItemWeaponDamageMisc(0);
+      setItemWeaponToHitMagic('');
+      setItemWeaponToHitMisc('');
+      setItemWeaponDamageMagic('');
+      setItemWeaponDamageMisc('');
+      setItemWeaponDamageNumDice('');
 
       setItemHasEffects(false);
       setItemEffects([]);
       setNewEffectKind('attack');
-setNewEffectMiscToHit(0);
-      setNewEffectMiscDamage(0);
-      setNewEffectMagicToHit(0);
-      setNewEffectMagicDamage(0);
+      setNewEffectMiscToHit('');
+      setNewEffectMiscDamage('');
+      setNewEffectMagicToHit('');
+      setNewEffectMagicDamage('');
       
     }
     if (editModal.type === 'editItem') {
@@ -2477,15 +2556,13 @@ setNewEffectMiscToHit(0);
       });
       setItemIsArmor(!!editModal.item?.isArmor);
       setItemIsShield(!!editModal.item?.isShield);
-      // Stat bonuses can include multiple bonuses (e.g., STR + DEX). Support both new array and legacy single fields.
-      const legacyAttr = String(editModal.item?.attrBonusAttr || '').toLowerCase();
-      const legacyVal = Number(editModal.item?.attrBonusValue) || 0;
+      // Load stat bonuses from attrBonuses array
       const loadedBonuses = Array.isArray(editModal.item?.attrBonuses)
         ? editModal.item.attrBonuses
             .filter(b => b && typeof b === 'object')
             .map(b => ({ attr: String(b.attr || '').toLowerCase(), value: Number(b.value) || 0 }))
             .filter(b => b.attr && b.value !== 0)
-        : (legacyAttr && legacyVal !== 0 ? [{ attr: legacyAttr, value: legacyVal }] : []);
+        : [];
 
       setItemHasAttrBonus(!!editModal.item?.hasAttrBonus || loadedBonuses.length > 0);
       setItemStatBonuses(loadedBonuses);
@@ -2502,14 +2579,21 @@ setNewEffectMiscToHit(0);
 
       setItemIsWeapon(!!editModal.item?.isWeapon);
       setItemIsAmmo(!!editModal.item?.isAmmo);
+      setItemIsPotion(!!editModal.item?.isPotion);
       setItemWeaponType(editModal.item?.weaponType || 'melee');
       setItemWeaponMelee(!!(editModal.item?.weaponMelee ?? ((editModal.item?.weaponType || 'melee') === 'melee')));
       setItemWeaponRanged(!!(editModal.item?.weaponRanged ?? ((editModal.item?.weaponType || 'melee') === 'ranged')));
-      setItemWeaponToHitMagic(Number(editModal.item?.weaponToHitMagic) || 0);
-      setItemWeaponToHitMisc(Number(editModal.item?.weaponToHitMisc) || 0);
-      setItemWeaponDamageMagic(Number(editModal.item?.weaponDamageMagic) || 0);
-      setItemWeaponDamageMisc(Number(editModal.item?.weaponDamageMisc) || 0);
-      setItemWeaponDamageNumDice(Number(editModal.item?.weaponDamageNumDice) || 1);
+      // Load weapon values as strings for better input UX (show empty for 0)
+      const toHitMagic = Number(editModal.item?.weaponToHitMagic) || 0;
+      const toHitMisc = Number(editModal.item?.weaponToHitMisc) || 0;
+      const dmgMagic = Number(editModal.item?.weaponDamageMagic) || 0;
+      const dmgMisc = Number(editModal.item?.weaponDamageMisc) || 0;
+      const numDice = Number(editModal.item?.weaponDamageNumDice) || 1;
+      setItemWeaponToHitMagic(toHitMagic === 0 ? '' : String(toHitMagic));
+      setItemWeaponToHitMisc(toHitMisc === 0 ? '' : String(toHitMisc));
+      setItemWeaponDamageMagic(dmgMagic === 0 ? '' : String(dmgMagic));
+      setItemWeaponDamageMisc(dmgMisc === 0 ? '' : String(dmgMisc));
+      setItemWeaponDamageNumDice(numDice === 1 ? '' : String(numDice));
       setItemWeaponDamageDieType(Number(editModal.item?.weaponDamageDieType) || 8);
 
       // Load item effects (new format)
@@ -3089,7 +3173,7 @@ if (editModal.type === 'acTracking' && char) {
     const appliedIdsRaw = Array.isArray(editModal.attack?.appliedEffectItemIds)
       ? editModal.attack.appliedEffectItemIds
       : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds : []);
-    const appliedEffectItemIds = appliedIdsRaw.map((x: any) => String(x));
+    const appliedEffectItemIds = appliedIdsRaw.map((x: string | number) => String(x));
 
     const newAttack = {
       ...existing,
@@ -3227,8 +3311,8 @@ if (editModal.type === 'acTracking' && char) {
     if (!editModal) return;
     
     const selected = Array.isArray(editModal.attack?.appliedEffectItemIds)
-      ? editModal.attack.appliedEffectItemIds.map((x: any) => String(x))
-      : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds.map((x: any) => String(x)) : []);
+      ? editModal.attack.appliedEffectItemIds.map((x: string | number) => String(x))
+      : (Array.isArray(editModal.appliedEffectItemIds) ? editModal.appliedEffectItemIds.map((x: string | number) => String(x)) : []);
     
     const selectedSet = new Set(selected);
     const sid = String(itemId);
@@ -5739,10 +5823,11 @@ if (editModal.type === 'acTracking' && char) {
                         type="text" inputMode="numeric"
                         min={1}
                         max={Math.max(1, remaining)}
-                        value={invCopies}
-                        onChange={(e) => setInvCopies(parseInt(e.target.value || "1", 10) || 1)}
+                        value={invCopies === 1 ? '' : invCopies}
+                        onChange={(e) => setInvCopies(e.target.value === '' ? 1 : Math.max(1, parseInt(e.target.value) || 1))}
                         className="w-full p-2 rounded bg-gray-900 border border-gray-700"
                         disabled={remaining <= 0}
+                        placeholder="1"
                       />
                     </div>
 
@@ -6655,190 +6740,220 @@ if (editModal.type === 'acTracking' && char) {
               <div className="text-center text-gray-400 py-8">No items yet</div>
             )}
             {char.inventory.length > 0 && (
-              <VirtualizedList
-                items={sortedInventory}
-                itemHeight={70}
-                containerHeight={Math.min(600, window.innerHeight - 300)}
-                emptyMessage="No items yet"
-                renderItem={(item) => {
-                  const totalWeight = item.weightPer * item.quantity;
-                  const isExpanded = expandedInventoryIds[item.id];
+              <div className="space-y-3">
+                {/* Render each category */}
+                {Object.entries(categorizedInventory.categories).map(([catKey, category]) => {
+                  if (category.items.length === 0) return null;
+                  const isExpanded = expandedInventoryCategories[catKey];
+                  
+                  // Calculate category totals (only count weight once even if item appears in multiple categories)
+                  const seenIds = new Set<number>();
+                  let categoryWeight = 0;
+                  for (const item of category.items) {
+                    if (!seenIds.has(item.id)) {
+                      // Only count weight if this is the item's primary category (first one it appears in)
+                      const itemCats = categorizedInventory.itemCategories.get(item.id) || [];
+                      const primaryCat = Object.entries(categorizedInventory.categories).find(
+                        ([, c]) => c.items.some(i => i.id === item.id)
+                      )?.[0];
+                      if (primaryCat === catKey) {
+                        categoryWeight += (item.weightPer || 0) * (item.quantity || 1);
+                      }
+                      seenIds.add(item.id);
+                    }
+                  }
+                  
                   return (
-                    <div className="bg-gray-700 rounded overflow-hidden">
-                      {/* Collapsed Header */}
-                      <div 
-                        className="p-3 cursor-pointer hover:bg-gray-600 transition-colors"
-                        onClick={() => setExpandedInventoryIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                    <div key={catKey} className="bg-gray-800 rounded overflow-hidden">
+                      {/* Category Header */}
+                      <div
+                        className="p-3 cursor-pointer hover:bg-gray-700 transition-colors flex items-center justify-between"
+                        onClick={() => setExpandedInventoryCategories(prev => ({ ...prev, [catKey]: !prev[catKey] }))}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span>{isExpanded ? '▼' : '▶'}</span>
-                              <span className="font-bold">{item.name}</span>
-                              <span className="text-gray-400">×{item.quantity}</span>
-                            </div>
-                            <div className="text-sm text-gray-400 ml-5">
-                              {totalWeight.toFixed(2)} lb • EV: {Number(item.ev).toFixed(1)}
-                              {item.worthAmount > 0 && ` • ${item.worthAmount} ${(item.worthUnit || 'gp').toUpperCase()}`}
-                            </div>
-                          </div>
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editItem', item }); }} 
-                            className="p-2 bg-gray-600 rounded hover:bg-gray-500 flex-shrink-0"
-                          >
-                            <Edit2 size={16} />
-                          </button>
+                        <div className="flex items-center gap-2">
+                          <span>{isExpanded ? '▼' : '▶'}</span>
+                          <span className="text-lg">{category.icon}</span>
+                          <span className="font-bold text-lg">{category.name}</span>
+                          <span className="text-gray-400 text-sm">({category.items.length})</span>
                         </div>
+                        {categoryWeight > 0 && (
+                          <span className="text-sm text-gray-400">{categoryWeight.toFixed(2)} lb</span>
+                        )}
                       </div>
-
-                      {/* Expanded Content */}
+                      
+                      {/* Category Items */}
                       {isExpanded && (
-                        <div className="px-3 pb-3 border-t border-gray-600">
-                          {item.description && (
-                            <div className="text-sm text-gray-300 mt-2 mb-3">{item.description}</div>
-                          )}
-                          
-                          {normalizeItemEffects(item).length > 0 && (
-                            <div className="text-xs text-gray-200 mb-3">
-                              <div className="text-gray-400">Effects:</div>
-                              <div className="mt-1 space-y-1">
-                                {normalizeItemEffects(item).map((e) => (
-                                  <div key={e.id || `${item.id}-${e.kind}-${e.appliesTo}-${e.targetId || ''}`}>
-                                    {e.kind === 'attack' && (
-                                      <span>
-                                        Attack: {e.appliesTo === 'unarmed' ? 'Unarmed' : 'Weapon'}
-                                        {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
-                                        {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
-                                        {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
-                                        {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
-                                        {e.appliesTo === 'weapon' && e.targetId ? (() => {
-                                          const w = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                          return w ? ` (${w.name})` : '';
-                                        })() : ''}
-                                      </span>
-                                    )}
-                                    {e.kind === 'ac' && (
-                                      <span>
-                                        AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0} ({e.appliesTo || 'ac'})
-                                        {e.targetId ? (() => {
-                                          const t = (char.inventory || []).find(ii => String(ii.id) === String(e.targetId));
-                                          return t ? ` (${t.name})` : '';
-                                        })() : ''}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Display Stat Bonuses */}
-                          {item.hasAttrBonus && (() => {
-                            const bonuses = Array.isArray(item.attrBonuses) 
-                              ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
-                              : (item.attrBonusAttr && (Number(item.attrBonusValue) || 0) !== 0 
-                                  ? [{ attr: item.attrBonusAttr, value: item.attrBonusValue }] 
-                                  : []);
-                            if (bonuses.length === 0) return null;
+                        <div className="border-t border-gray-700">
+                          {category.items.map((item) => {
+                            const totalWeight = (item.weightPer || 0) * (item.quantity || 1);
+                            const isItemExpanded = expandedInventoryIds[item.id];
+                            const itemCats = categorizedInventory.itemCategories.get(item.id) || [];
+                            const otherCats = itemCats.filter(c => c !== category.name);
+                            
                             return (
-                              <div className="text-xs text-gray-200 mb-3">
-                                <div className="text-gray-400">Stat Bonuses:</div>
-                                <div className="mt-1 flex flex-wrap gap-2">
-                                  {bonuses.map((b, idx) => (
-                                    <span key={`${b.attr}-${idx}`} className="bg-gray-800 px-2 py-1 rounded">
-                                      {String(b.attr).toUpperCase()}: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value)}
-                                    </span>
-                                  ))}
+                              <div key={item.id} className="bg-gray-700 mx-2 my-2 rounded overflow-hidden">
+                                {/* Item Header */}
+                                <div 
+                                  className="p-3 cursor-pointer hover:bg-gray-600 transition-colors"
+                                  onClick={() => setExpandedInventoryIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span>{isItemExpanded ? '▼' : '▶'}</span>
+                                        <span className="font-bold">{item.name}</span>
+                                        <span className="text-gray-400">×{item.quantity}</span>
+                                      </div>
+                                      <div className="text-sm text-gray-400 ml-5">
+                                        {totalWeight.toFixed(2)} lb • EV: {Number(item.ev || 0).toFixed(1)}
+                                        {(item.worthAmount || 0) > 0 && ` • ${item.worthAmount} ${(item.worthUnit || 'gp').toUpperCase()}`}
+                                      </div>
+                                      {otherCats.length > 0 && (
+                                        <div className="text-xs text-blue-400 ml-5 mt-1">
+                                          Also in: {otherCats.join(', ')}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); setEditModal({ type: 'editItem', item }); }} 
+                                      className="p-2 bg-gray-600 rounded hover:bg-gray-500 flex-shrink-0"
+                                    >
+                                      <Edit2 size={16} />
+                                    </button>
+                                  </div>
                                 </div>
+
+                                {/* Expanded Item Content */}
+                                {isItemExpanded && (
+                                  <div className="px-3 pb-3 border-t border-gray-600">
+                                    {item.description && (
+                                      <div className="text-sm text-gray-300 mt-2 mb-3">{item.description}</div>
+                                    )}
+                                    
+                                    {normalizeItemEffects(item).length > 0 && (
+                                      <div className="text-xs text-gray-200 mb-3">
+                                        <div className="text-gray-400">Effects:</div>
+                                        <div className="mt-1 space-y-1">
+                                          {normalizeItemEffects(item).map((e) => (
+                                            <div key={e.id || `${item.id}-${e.kind}`}>
+                                              {e.kind === 'attack' && (
+                                                <span>
+                                                  Attack
+                                                  {(Number(e.miscToHit) || 0) ? ` • Misc ${Number(e.miscToHit) >= 0 ? '+' : ''}${Number(e.miscToHit)} hit` : ''}
+                                                  {(Number(e.miscDamage) || 0) ? ` • Misc ${Number(e.miscDamage) >= 0 ? '+' : ''}${Number(e.miscDamage)} dmg` : ''}
+                                                  {(Number(e.magicToHit) || 0) ? ` • Magic ${Number(e.magicToHit) >= 0 ? '+' : ''}${Number(e.magicToHit)} hit` : ''}
+                                                  {(Number(e.magicDamage) || 0) ? ` • Magic ${Number(e.magicDamage) >= 0 ? '+' : ''}${Number(e.magicDamage)} dmg` : ''}
+                                                </span>
+                                              )}
+                                              {e.kind === 'ac' && (
+                                                <span>AC: {Number(e.ac) >= 0 ? '+' : ''}{Number(e.ac) || 0}</span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Stat Bonuses */}
+                                    {item.hasAttrBonus && (() => {
+                                      const bonuses = Array.isArray(item.attrBonuses) 
+                                        ? item.attrBonuses.filter(b => b && b.attr && (Number(b.value) || 0) !== 0)
+                                        : [];
+                                      if (!bonuses.length) return null;
+                                      return (
+                                        <div className="text-xs text-gray-200 mb-3">
+                                          <div className="text-gray-400">Stat Bonuses:</div>
+                                          <div className="mt-1">
+                                            {bonuses.map((b, idx) => (
+                                              <span key={idx}>
+                                                {idx > 0 && ', '}
+                                                {b.attr.toUpperCase()} {Number(b.value) >= 0 ? '+' : ''}{b.value}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Quantity Controls */}
+                                    <div className="flex items-center justify-between gap-4 pt-2">
+                                      <div className="flex items-center gap-2">
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const nextInv = char.inventory
+                                              .map(i => i.id === item.id ? { ...i, quantity: Math.max(0, i.quantity - 1) } : i)
+                                              .filter(i => (i.quantity || 0) > 0);
+                                            const updated = nextInv.find(i => String(i.id) === String(item.id));
+                                            let nextMagicItems = char.magicItems || [];
+                                            if (updated) {
+                                              nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
+                                            } else {
+                                              nextMagicItems = nextMagicItems.filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
+                                            }
+                                            updateChar({ inventory: nextInv, magicItems: nextMagicItems });
+                                          }} 
+                                          className="p-1 bg-red-600 rounded hover:bg-red-700"
+                                        >
+                                          <Minus size={14} />
+                                        </button>
+                                        <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const newInv = char.inventory.map(i =>
+                                              i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+                                            );
+                                            const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
+                                            const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
+                                            updateChar({ inventory: newInv, magicItems: nextMagicItems });
+                                          }} 
+                                          className="p-1 bg-green-600 rounded hover:bg-green-700"
+                                        >
+                                          <Plus size={14} />
+                                        </button>
+                                      </div>
+                                      <div className="text-sm text-gray-300">
+                                        <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
+                                        <span className="font-semibold text-white">{Number(item.weightPer || 0).toFixed(2)}</span> lb
+                                      </div>
+                                    </div>
+
+                                    {/* Sell Button */}
+                                    {(() => {
+                                      const worthAmount = Number(item.worthAmount) || 0;
+                                      const worthUnit = String(item.worthUnit || 'gp').toLowerCase();
+                                      if (worthAmount <= 0) return null;
+                                      return (
+                                        <div className="flex items-center justify-between gap-2 mt-2">
+                                          <div className="text-xs text-gray-300">
+                                            Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditModal({ type: 'confirmSellItem', itemId: item.id });
+                                            }}
+                                            className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
+                                            title="Sell one"
+                                          >
+                                            Sell
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+                                )}
                               </div>
                             );
-                          })()}
-
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-400">Qty</span>
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const nextInv = (char.inventory || [])
-                                      .map(i =>
-                                        i.id === item.id
-                                          ? { ...i, quantity: Math.max(0, i.quantity - 1) }
-                                          : i
-                                      )
-                                      .filter(i => (i.quantity || 0) > 0);
-
-                                    const updated = nextInv.find(i => String(i.id) === String(item.id));
-                                    let nextMagicItems = char.magicItems || [];
-                                    if (updated) {
-                                      nextMagicItems = syncMagicItemForInventoryItem(updated, nextMagicItems);
-                                    } else {
-                                      nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(item.id)}`);
-                                    }
-
-                                    updateChar({ inventory: nextInv, magicItems: nextMagicItems });
-                                  }} 
-                                  className="p-1 bg-red-600 rounded hover:bg-red-700"
-                                >
-                                  <Minus size={14} />
-                                </button>
-                                <span className="text-lg font-bold w-12 text-center">{item.quantity}</span>
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const newInv = char.inventory.map(i =>
-                                      i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
-                                    );
-                                    const updatedItem = newInv.find(i => String(i.id) === String(item.id)) || item;
-                                    const nextMagicItems = syncMagicItemForInventoryItem(updatedItem, char.magicItems || []);
-                                    updateChar({ inventory: newInv, magicItems: nextMagicItems });
-                                  }} 
-                                  className="p-1 bg-green-600 rounded hover:bg-green-700"
-                                >
-                                  <Plus size={14} />
-                                </button>
-                              </div>
-
-                              <div className="text-sm text-gray-300">
-                                <span className="text-xs text-gray-400 mr-1">Wt/ea</span>
-                                <span className="font-semibold text-white">{Number(item.weightPer).toFixed(2)}</span> lb
-                              </div>
-                            </div>
-
-                            {(() => {
-                              const amount = (item.worthAmount != null ? Number(item.worthAmount) : (item.worthGP != null ? Number(item.worthGP) : null));
-                              const unit = String(item.worthUnit || (item.worthGP != null ? 'gp' : 'gp')).toLowerCase();
-                              const worthAmount = amount != null && Number.isFinite(amount) ? amount : null;
-                              const worthUnit = ['cp','sp','gp','pp'].includes(unit) ? unit : 'gp';
-                              if (worthAmount == null || worthAmount <= 0) return null;
-
-                              return (
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-xs text-gray-300">
-                                    Worth: <span className="font-semibold text-white">{worthAmount}</span> {worthUnit.toUpperCase()}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setEditModal({ type: 'confirmSellItem', itemId: item.id });
-                                    }}
-                                    className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
-                                    title="Sell one"
-                                  >
-                                    Sell
-                                  </button>
-                                </div>
-                              );
-                            })()}
-                          </div>
+                          })}
                         </div>
                       )}
                     </div>
                   );
-                }}
-              />
+                })}
+              </div>
             )}
             
             <div className="bg-gray-800 p-4 rounded">
@@ -9071,6 +9186,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           />
                           Ammo
                         </label>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemIsPotion}
+                            onChange={(e) => setItemIsPotion(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Potion
+                        </label>
                       </>
                     )}
                   </div>
@@ -9131,9 +9256,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <label className="block text-sm text-gray-400 mb-1">AC Bonus</label>
                       <input
                         type="text" inputMode="numeric"
-                        value={itemForm.acBonus}
-                        onChange={(e) => updateItemForm({ acBonus: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                        value={itemForm.acBonus === 0 ? '' : itemForm.acBonus}
+                        onChange={(e) => updateItemForm({ acBonus: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
                         className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="0"
                       />
                       <div className="text-xs text-gray-400 mt-1">
                         This is the AC bonus the armor/shield provides (for AC Tracking dropdowns).
@@ -9150,8 +9276,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             type="text" inputMode="numeric"
                             min="1"
                             value={itemWeaponDamageNumDice}
-                            onChange={(e) => setItemWeaponDamageNumDice(e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
+                            onChange={(e) => setItemWeaponDamageNumDice(e.target.value.replace(/[^0-9]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
+                            placeholder="1"
                           />
                         </div>
                         <div>
@@ -9185,9 +9312,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <input
                             type="text" inputMode="numeric"
                             value={itemWeaponToHitMagic}
-                            onChange={(e) => setItemWeaponToHitMagic(parseInt(e.target.value || '0', 10) || 0)}
+                            onChange={(e) => setItemWeaponToHitMagic(e.target.value.replace(/[^0-9-]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
-                            id="item-wep-tohit-magic"
+                            placeholder="0"
                           />
                         </div>
                         <div>
@@ -9195,9 +9322,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <input
                             type="text" inputMode="numeric"
                             value={itemWeaponToHitMisc}
-                            onChange={(e) => setItemWeaponToHitMisc(parseInt(e.target.value || '0', 10) || 0)}
+                            onChange={(e) => setItemWeaponToHitMisc(e.target.value.replace(/[^0-9-]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
-                            id="item-wep-tohit-misc"
+                            placeholder="0"
                           />
                         </div>
                         <div>
@@ -9205,9 +9332,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <input
                             type="text" inputMode="numeric"
                             value={itemWeaponDamageMagic}
-                            onChange={(e) => setItemWeaponDamageMagic(parseInt(e.target.value || '0', 10) || 0)}
+                            onChange={(e) => setItemWeaponDamageMagic(e.target.value.replace(/[^0-9-]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
-                            id="item-wep-dmg-magic"
+                            placeholder="0"
                           />
                         </div>
                         <div>
@@ -9215,9 +9342,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <input
                             type="text" inputMode="numeric"
                             value={itemWeaponDamageMisc}
-                            onChange={(e) => setItemWeaponDamageMisc(parseInt(e.target.value || '0', 10) || 0)}
+                            onChange={(e) => setItemWeaponDamageMisc(e.target.value.replace(/[^0-9-]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
-                            id="item-wep-dmg-misc"
+                            placeholder="0"
                           />
                         </div>
                       </div>
@@ -9402,8 +9529,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <input
                               type="text" inputMode="numeric"
                               value={newEffectMiscToHit}
-                              onChange={(e) => setNewEffectMiscToHit(parseInt(e.target.value || '0', 10) || 0)}
+                              onChange={(e) => setNewEffectMiscToHit(e.target.value.replace(/[^0-9-]/g, ''))}
                               className="w-full p-2 bg-gray-700 rounded text-white"
+                              placeholder="0"
                             />
                           </div>
                           <div>
@@ -9411,8 +9539,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <input
                               type="text" inputMode="numeric"
                               value={newEffectMiscDamage}
-                              onChange={(e) => setNewEffectMiscDamage(parseInt(e.target.value || '0', 10) || 0)}
+                              onChange={(e) => setNewEffectMiscDamage(e.target.value.replace(/[^0-9-]/g, ''))}
                               className="w-full p-2 bg-gray-700 rounded text-white"
+                              placeholder="0"
                             />
                           </div>
                           <div>
@@ -9420,8 +9549,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <input
                               type="text" inputMode="numeric"
                               value={newEffectMagicToHit}
-                              onChange={(e) => setNewEffectMagicToHit(parseInt(e.target.value || '0', 10) || 0)}
+                              onChange={(e) => setNewEffectMagicToHit(e.target.value.replace(/[^0-9-]/g, ''))}
                               className="w-full p-2 bg-gray-700 rounded text-white"
+                              placeholder="0"
                             />
                           </div>
                           <div>
@@ -9429,8 +9559,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <input
                               type="text" inputMode="numeric"
                               value={newEffectMagicDamage}
-                              onChange={(e) => setNewEffectMagicDamage(parseInt(e.target.value || '0', 10) || 0)}
+                              onChange={(e) => setNewEffectMagicDamage(e.target.value.replace(/[^0-9-]/g, ''))}
                               className="w-full p-2 bg-gray-700 rounded text-white"
+                              placeholder="0"
                             />
                           </div>
                         </div>
@@ -9440,8 +9571,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <input
                             type="text" inputMode="numeric"
                             value={newEffectAC}
-                            onChange={(e) => setNewEffectAC(parseInt(e.target.value || '0', 10) || 0)}
+                            onChange={(e) => setNewEffectAC(e.target.value.replace(/[^0-9-]/g, ''))}
                             className="w-full p-2 bg-gray-700 rounded text-white"
+                            placeholder="0"
                           />
                         </div>
                       )}
@@ -9452,11 +9584,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           const eff = {
                             id: String(Date.now()) + '-' + Math.random().toString(16).slice(2),
                             kind,
-                            miscToHit: kind === 'attack' ? (Number(newEffectMiscToHit) || 0) : 0,
-                            miscDamage: kind === 'attack' ? (Number(newEffectMiscDamage) || 0) : 0,
-                            magicToHit: kind === 'attack' ? (Number(newEffectMagicToHit) || 0) : 0,
-                            magicDamage: kind === 'attack' ? (Number(newEffectMagicDamage) || 0) : 0,
-                            ac: kind === 'ac' ? (Number(newEffectAC) || 0) : 0
+                            miscToHit: kind === 'attack' ? (parseInt(newEffectMiscToHit, 10) || 0) : 0,
+                            miscDamage: kind === 'attack' ? (parseInt(newEffectMiscDamage, 10) || 0) : 0,
+                            magicToHit: kind === 'attack' ? (parseInt(newEffectMagicToHit, 10) || 0) : 0,
+                            magicDamage: kind === 'attack' ? (parseInt(newEffectMagicDamage, 10) || 0) : 0,
+                            ac: kind === 'ac' ? (parseInt(newEffectAC, 10) || 0) : 0
                           };
                           // prevent empty effects
                           const isEmptyAttack = kind === 'attack' && !(eff.miscToHit || eff.miscDamage || eff.magicToHit || eff.magicDamage);
@@ -9497,6 +9629,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         isShield: !!itemIsShield,
                         isWeapon: !!itemIsWeapon,
                         isAmmo: !!itemIsAmmo,
+                        isPotion: !!itemIsPotion,
                         weaponType: itemIsWeapon ? ((itemWeaponRanged && !itemWeaponMelee) ? 'ranged' : 'melee') : undefined,
                         weaponMelee: itemIsWeapon ? !!itemWeaponMelee : false,
                         weaponRanged: itemIsWeapon ? !!itemWeaponRanged : false,
@@ -9578,16 +9711,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <label className="block text-sm text-gray-400 mb-2">Spell Save DC</label>
                   <input
                     type="text" inputMode="numeric"
-                    value={modalForms.spellDC}
-                    onChange={(e) => updateModalForm({ spellDC: parseInt(e.target.value) || 10 })}
+                    value={modalForms.spellDC === 10 ? '' : modalForms.spellDC}
+                    onChange={(e) => updateModalForm({ spellDC: e.target.value === '' ? 10 : (parseInt(e.target.value) || 10) })}
                     className="w-full p-2 bg-gray-700 rounded text-white mb-3"
+                    placeholder="10"
                   />
                   <label className="block text-sm text-gray-400 mb-2">Spell Attack Bonus</label>
                   <input
                     type="text" inputMode="numeric"
-                    value={modalForms.spellAtk}
-                    onChange={(e) => updateModalForm({ spellAtk: e.target.value === '' ? '' : (parseInt(e.target.value) || 0) })}
+                    value={modalForms.spellAtk === 0 ? '' : modalForms.spellAtk}
+                    onChange={(e) => updateModalForm({ spellAtk: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
                     className="w-full p-2 bg-gray-700 rounded text-white"
+                    placeholder="0"
                   />
                   <button
                     onClick={() => {
