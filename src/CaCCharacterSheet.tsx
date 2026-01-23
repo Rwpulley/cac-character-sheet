@@ -483,18 +483,6 @@ const importFromFile = (file: File): Promise<Character[]> => {
 
 // ===== UTILITY FUNCTIONS =====
 
-/** Debounce hook for text inputs */
-function useDebounce<T>(value: T, delay: number = 300): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-  
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-  
-  return debouncedValue;
-}
-
 interface DebouncedInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
   value: string;
   onChange: (value: string) => void;
@@ -1623,6 +1611,64 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     });
   }, []);
 
+  // ===== CONTROLLED INPUTS FOR DICE/XP/SPELL SLOTS =====
+  // These replace document.getElementById calls with proper React state
+  
+  // Generic dice inputs state - keyed by a unique identifier
+  // Used for spell dice, grimoire dice, companion damage dice, magic item dice
+  const [diceInputs, setDiceInputs] = useState<Record<string, number[]>>({});
+  
+  const getDiceInputs = useCallback((key: string, count: number): number[] => {
+    return diceInputs[key] || Array(count).fill(0);
+  }, [diceInputs]);
+  
+  const setDiceInput = useCallback((key: string, index: number, value: number) => {
+    setDiceInputs(prev => {
+      const current = prev[key] || [];
+      const updated = [...current];
+      updated[index] = value;
+      return { ...prev, [key]: updated };
+    });
+  }, []);
+  
+  const clearDiceInputs = useCallback((key: string) => {
+    setDiceInputs(prev => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+  
+  // XP Table form state
+  const [xpTableForm, setXpTableForm] = useState<number[]>([]);
+  
+  const initXpTableForm = useCallback((xpTable: number[]) => {
+    setXpTableForm([...xpTable]);
+  }, []);
+  
+  const updateXpTableForm = useCallback((index: number, value: number) => {
+    setXpTableForm(prev => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  }, []);
+  
+  // Spell Slots form state
+  const [spellSlotsForm, setSpellSlotsForm] = useState<number[]>([]);
+  
+  const initSpellSlotsForm = useCallback((slots: number[]) => {
+    setSpellSlotsForm([...slots]);
+  }, []);
+  
+  const updateSpellSlotsForm = useCallback((index: number, value: number) => {
+    setSpellSlotsForm(prev => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  }, []);
+
   // Inventory item form (basic fields - flags handled by itemModal)
   const [itemForm, setItemForm] = useState({
     name: '',
@@ -2305,6 +2351,14 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     if (editModal.type === 'addXp') {
       updateModalForm({ xpAdd: 0 });
+    }
+    if (editModal.type === 'xpTable' && char) {
+      // Initialize XP table form with current values
+      initXpTableForm(char.xpTable || [0, 0, 500, 1001, 2001, 4001, 8001, 16001, 32001, 64001, 128001, 256001, 512001]);
+    }
+    if (editModal.type === 'spellSlots' && char) {
+      // Initialize spell slots form with current values
+      initSpellSlotsForm(char.spellSlots || [0,0,0,0,0,0,0,0,0,0]);
     }
     if (editModal.type === 'attribute' && char) {
       const attr = char.attributes?.[editModal.attr];
@@ -4909,33 +4963,39 @@ if (editModal.type === 'acTracking' && char) {
                                     Roll {char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}{spell.diceType}
                                   </button>
                                   <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                                  <div className="grid grid-cols-4 gap-1 mb-1">
-                                    {Array.from({ length: char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1 }).map((_, i) => (
-                                      <input
-                                        key={i}
-                                        type="text" inputMode="numeric"
-                                        placeholder={spell.diceType}
-                                        className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                        id={`spell-dice-${prepIds[0]}-${i}`}
-                                      />
-                                    ))}
-                                  </div>
-                                  <button
-                                    onClick={() => {
-                                      const numDice = char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1;
-                                      const rolls = Array.from({ length: numDice }).map((_, i) => {
-                                        const val = parseInt(document.getElementById(`spell-dice-${prepIds[0]}-${i}`).value);
-                                        return val || 0;
-                                      });
-                                      if (rolls.every(r => r > 0)) {
-                                        const total = rolls.reduce((a, b) => a + b, 0);
-                                        setRollResult({ rolls, total });
-                                      }
-                                    }}
-                                    className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
-                                  >
-                                    Calculate
-                                  </button>
+                                  {(() => {
+                                    const diceKey = `spell-dice-${prepIds[0]}`;
+                                    const numDice = char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1;
+                                    const diceValues = getDiceInputs(diceKey, numDice);
+                                    return (
+                                      <>
+                                        <div className="grid grid-cols-4 gap-1 mb-1">
+                                          {Array.from({ length: numDice }).map((_, i) => (
+                                            <input
+                                              key={i}
+                                              type="text" inputMode="numeric"
+                                              placeholder={spell.diceType}
+                                              value={diceValues[i] || ''}
+                                              onChange={(e) => setDiceInput(diceKey, i, parseInt(e.target.value) || 0)}
+                                              className="p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                            />
+                                          ))}
+                                        </div>
+                                        <button
+                                          onClick={() => {
+                                            const rolls = diceValues.slice(0, numDice);
+                                            if (rolls.every(r => r > 0)) {
+                                              const total = rolls.reduce((a, b) => a + b, 0);
+                                              setRollResult({ rolls, total });
+                                            }
+                                          }}
+                                          className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
+                                        >
+                                          Calculate
+                                        </button>
+                                      </>
+                                    );
+                                  })()}
                                   {rollResult?.rolls && (
                                     <div className="mt-1 text-center text-sm">
                                       <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
@@ -5230,34 +5290,40 @@ if (editModal.type === 'acTracking' && char) {
                                       Roll {(grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1}{spell.diceType}
                                     </button>
                                     <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                                    <div className="grid grid-cols-4 gap-1 mb-1">
-                                      {Array.from({ length: (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1 }).map((_, i) => (
-                                        <input
-                                          key={i}
-                                          type="text" inputMode="numeric"
-                                          placeholder={spell.diceType}
-                                          className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                          id={`grimoire-dice-${group.entryIds[0]}-${i}`}
-                                        />
-                                      ))}
-                                    </div>
-                                    <button
-                                      onClick={() => {
-                                        const entry = (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0]);
-                                        const numDice = entry?.numDice || 1;
-                                        const rolls = Array.from({ length: numDice }).map((_, i) => {
-                                          const val = parseInt(document.getElementById(`grimoire-dice-${group.entryIds[0]}-${i}`).value);
-                                          return val || 0;
-                                        });
-                                        if (rolls.every(r => r > 0)) {
-                                          const total = rolls.reduce((a, b) => a + b, 0);
-                                          setRollResult({ rolls, total });
-                                        }
-                                      }}
-                                      className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
-                                    >
-                                      Calculate
-                                    </button>
+                                    {(() => {
+                                      const diceKey = `grimoire-dice-${group.entryIds[0]}`;
+                                      const entry = (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0]);
+                                      const numDice = entry?.numDice || 1;
+                                      const diceValues = getDiceInputs(diceKey, numDice);
+                                      return (
+                                        <>
+                                          <div className="grid grid-cols-4 gap-1 mb-1">
+                                            {Array.from({ length: numDice }).map((_, i) => (
+                                              <input
+                                                key={i}
+                                                type="text" inputMode="numeric"
+                                                placeholder={spell.diceType}
+                                                value={diceValues[i] || ''}
+                                                onChange={(e) => setDiceInput(diceKey, i, parseInt(e.target.value) || 0)}
+                                                className="p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                              />
+                                            ))}
+                                          </div>
+                                          <button
+                                            onClick={() => {
+                                              const rolls = diceValues.slice(0, numDice);
+                                              if (rolls.every(r => r > 0)) {
+                                                const total = rolls.reduce((a, b) => a + b, 0);
+                                                setRollResult({ rolls, total });
+                                              }
+                                            }}
+                                            className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
+                                          >
+                                            Calculate
+                                          </button>
+                                        </>
+                                      );
+                                    })()}
                                     {rollResult?.rolls && (
                                       <div className="mt-1 text-center text-sm">
                                         <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
@@ -5500,34 +5566,39 @@ if (editModal.type === 'acTracking' && char) {
                                                   Roll {Number(g.entries?.[0]?.numDice || 1)}{s.diceType}
                                                 </button>
                                                 <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                                                <div className="grid grid-cols-4 gap-1 mb-1">
-                                                  {Array.from({ length: Math.max(1, Number(g.entries?.[0]?.numDice || 1)) }).map((_, i) => (
-                                                    <input
-                                                      key={i}
-                                                      type="text" inputMode="numeric"
-                                                      placeholder={s.diceType}
-                                                      className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                                      id={`mi-dice-${item.id}-${s.id || s.name}-${g.permanent ? 'p' : 't'}-${i}`}
-                                                    />
-                                                  ))}
-                                                </div>
-                                                <button
-                                                  onClick={() => {
-                                                    const numDice = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
-                                                    const rolls = Array.from({ length: numDice }).map((_, i) => {
-                                                      const el = document.getElementById(`mi-dice-${item.id}-${s.id || s.name}-${g.permanent ? 'p' : 't'}-${i}`);
-                                                      const val = parseInt(el?.value);
-                                                      return val || 0;
-                                                    });
-                                                    if (rolls.every(r => r > 0)) {
-                                                      const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
-                                                      setRollResult({ rolls, total });
-                                                    }
-                                                  }}
-                                                  className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
-                                                >
-                                                  Calculate
-                                                </button>
+                                                {(() => {
+                                                  const diceKey = `mi-dice-${item.id}-${s.id || s.name}-${g.permanent ? 'p' : 't'}`;
+                                                  const numDice = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
+                                                  const diceValues = getDiceInputs(diceKey, numDice);
+                                                  return (
+                                                    <>
+                                                      <div className="grid grid-cols-4 gap-1 mb-1">
+                                                        {Array.from({ length: numDice }).map((_, i) => (
+                                                          <input
+                                                            key={i}
+                                                            type="text" inputMode="numeric"
+                                                            placeholder={s.diceType}
+                                                            value={diceValues[i] || ''}
+                                                            onChange={(e) => setDiceInput(diceKey, i, parseInt(e.target.value) || 0)}
+                                                            className="p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                                          />
+                                                        ))}
+                                                      </div>
+                                                      <button
+                                                        onClick={() => {
+                                                          const rolls = diceValues.slice(0, numDice);
+                                                          if (rolls.every(r => r > 0)) {
+                                                            const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
+                                                            setRollResult({ rolls, total });
+                                                          }
+                                                        }}
+                                                        className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
+                                                      >
+                                                        Calculate
+                                                      </button>
+                                                    </>
+                                                  );
+                                                })()}
                                                 {rollResult?.rolls && (
                                                   <div className="mt-1 text-center text-sm">
                                                     <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
@@ -5789,77 +5860,67 @@ if (editModal.type === 'acTracking' && char) {
                                             <div className="text-sm text-gray-300">
                                               {Number(g.entries?.[0]?.numDice || 1)}{s.diceType} {s.diceBonus ? `+ ${s.diceBonus}` : ""}
                                             </div>
-                                            <button
-                                              onClick={() => {
-                                                const sides = Number(String(s.diceType || "d6").replace("d", "")) || 6;
-                                                const n = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
-                                                // NOTE: rollDice takes a single argument (sides). Passing (1, sides)
-                                                // would always roll a 1 because only the first arg is used.
-                                                const rolls = Array.from({ length: n }, () => rollDice(sides));
-                                                setRollResult(rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0));
-                                                // set values into inputs for visibility
-                                                rolls.forEach((r, i) => {
-                                                  const el = document.getElementById(
-                                                    `mi-die-${item.id}-${s.id || s.name}-${g.permanent ? "p" : "t"}-${i}`
-                                                  );
-                                                  if (el) el.value = String(r);
-                                                });
-                                              }}
-                                              className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
-                                            >
-                                              Roll {Number(g.entries?.[0]?.numDice || 1)}
-                                              {s.diceType}
-                                            </button>
-                                          </div>
-
-                                          <div className="mt-3 text-sm text-gray-300">Or enter each die:</div>
-                                          <div className="mt-2 flex flex-wrap gap-2">
-                                            {Array.from({ length: Math.max(1, Number(g.entries?.[0]?.numDice || 1)) }).map((_, i) => {
+                                            {(() => {
+                                              const diceKey = `mi-die-${item.id}-${s.id || s.name}-${g.permanent ? "p" : "t"}`;
+                                              const numDice = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
+                                              const diceValues = getDiceInputs(diceKey, numDice);
                                               const sides = Number(String(s.diceType || "d6").replace("d", "")) || 6;
+                                              
                                               return (
-                                                <input
-                                                  key={i}
-                                                  id={`mi-die-${item.id}-${s.id || s.name}-${g.permanent ? "p" : "t"}-${i}`}
-                                                  type="text" inputMode="numeric"
-                                                  min={1}
-                                                  max={sides}
-                                                  placeholder={`1-${sides}`}
-                                                  className="w-16 p-1 bg-gray-700 rounded text-white text-sm"
-                                                />
+                                                <>
+                                                  <button
+                                                    onClick={() => {
+                                                      const rolls = Array.from({ length: numDice }, () => rollDice(sides));
+                                                      const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
+                                                      // Update dice inputs state with rolled values
+                                                      rolls.forEach((r, i) => setDiceInput(diceKey, i, r));
+                                                      setRollResult({ rolls, total });
+                                                    }}
+                                                    className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+                                                  >
+                                                    Roll {numDice}{s.diceType}
+                                                  </button>
+                                                  
+                                                  <div className="mt-3 text-sm text-gray-300">Or enter each die:</div>
+                                                  <div className="mt-2 flex flex-wrap gap-2">
+                                                    {Array.from({ length: numDice }).map((_, i) => (
+                                                      <input
+                                                        key={i}
+                                                        type="text" inputMode="numeric"
+                                                        min={1}
+                                                        max={sides}
+                                                        placeholder={`1-${sides}`}
+                                                        value={diceValues[i] || ''}
+                                                        onChange={(e) => setDiceInput(diceKey, i, parseInt(e.target.value) || 0)}
+                                                        className="w-16 p-1 bg-gray-700 rounded text-white text-sm"
+                                                      />
+                                                    ))}
+                                                  </div>
+
+                                                  <div className="mt-3 flex items-center justify-between">
+                                                    <button
+                                                      onClick={() => {
+                                                        const rolls = diceValues.slice(0, numDice).map(v => 
+                                                          Math.max(1, Math.min(sides, v || 0))
+                                                        );
+                                                        const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
+                                                        setRollResult({ rolls, total });
+                                                      }}
+                                                      className="px-3 py-2 bg-green-600 rounded hover:bg-green-700 font-semibold"
+                                                    >
+                                                      Calculate
+                                                    </button>
+
+                                                    <button
+                                                      onClick={() => setRollModal(null)}
+                                                      className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
+                                                    >
+                                                      Close
+                                                    </button>
+                                                  </div>
+                                                </>
                                               );
-                                            })}
-                                          </div>
-
-                                          <div className="mt-3 flex items-center justify-between">
-                                            <button
-                                              onClick={() => {
-                                                const sides = Number(String(s.diceType || "d6").replace("d", "")) || 6;
-                                                const n = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
-                                                const rolls = [];
-                                                let total = 0;
-                                                for (let i = 0; i < n; i++) {
-                                                  const el = document.getElementById(
-                                                    `mi-die-${item.id}-${s.id || s.name}-${g.permanent ? "p" : "t"}-${i}`
-                                                  );
-                                                  const v = Math.max(1, Math.min(sides, Number(el?.value || 0)));
-                                                  if (el) el.value = String(v);
-                                                  rolls.push(v);
-                                                  total += v;
-                                                }
-                                                total += Number(s.diceBonus) || 0;
-                                                setRollResult({ rolls, total });
-                                              }}
-                                              className="px-3 py-2 bg-green-600 rounded hover:bg-green-700 font-semibold"
-                                            >
-                                              Calculate
-                                            </button>
-
-                                            <button
-                                              onClick={() => setRollModal(null)}
-                                              className="px-3 py-2 bg-gray-700 rounded hover:bg-gray-600 font-semibold"
-                                            >
-                                              Close
-                                            </button>
+                                            })()}
                                           </div>
 
                                           {rollResult?.rolls && (
@@ -6472,32 +6533,39 @@ if (editModal.type === 'acTracking' && char) {
                               Roll {rollModal.diceCount ?? attack.numDice}d{attack.dieType}
                             </button>
                             <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
-                            <div className="grid grid-cols-3 gap-1 mb-1">
-                              {Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => (
-                                <input
-                                  key={i}
-                                  type="text" inputMode="numeric"
-                                  placeholder={`d${attack.dieType}`}
-                                  className="p-1 bg-gray-800 rounded text-white text-xs text-center"
-                                  id={`comp-dmg-${companion.id}-${attack.id}-${i}`}
-                                />
-                              ))}
-                            </div>
-                            <button
-                              onClick={() => {
-                                const rolls = Array.from({ length: (rollModal.diceCount ?? attack.numDice) }).map((_, i) => {
-                                  const val = parseInt(document.getElementById(`comp-dmg-${companion.id}-${attack.id}-${i}`).value);
-                                  return val || 0;
-                                });
-                                if (rolls.every(r => r > 0)) {
-                                  const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                  setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
-                                }
-                              }}
-                              className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
-                            >
-                              Calculate
-                            </button>
+                            {(() => {
+                              const diceKey = `comp-dmg-${companion.id}-${attack.id}`;
+                              const numDice = rollModal.diceCount ?? attack.numDice;
+                              const diceValues = getDiceInputs(diceKey, numDice);
+                              return (
+                                <>
+                                  <div className="grid grid-cols-3 gap-1 mb-1">
+                                    {Array.from({ length: numDice }).map((_, i) => (
+                                      <input
+                                        key={i}
+                                        type="text" inputMode="numeric"
+                                        placeholder={`d${attack.dieType}`}
+                                        value={diceValues[i] || ''}
+                                        onChange={(e) => setDiceInput(diceKey, i, parseInt(e.target.value) || 0)}
+                                        className="p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                      />
+                                    ))}
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      const rolls = diceValues.slice(0, numDice);
+                                      if (rolls.every(r => r > 0)) {
+                                        const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                        setRollResult({ rolls, diceTotal, total: diceTotal + dmgBonus });
+                                      }
+                                    }}
+                                    className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
+                                  >
+                                    Calculate
+                                  </button>
+                                </>
+                              );
+                            })()}
                             {rollResult?.rolls && (
                               <div className="text-center text-sm mt-1">
                                 <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.diceTotal}</div>
@@ -8140,8 +8208,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const existing = (Array.isArray(hpDraftRolls) && hpDraftRolls.length ? hpDraftRolls.slice() : ['', '', '']);
                       const currentVisible = Math.max(3, hpLevelsShown);
                       const lastVisibleIdx = currentVisible - 1;
-                      const lastEl = document.getElementById(`hp-level-${lastVisibleIdx}`);
-                      const lastVal = lastEl ? (parseInt(lastEl.value) || 0) : (parseInt(existing[lastVisibleIdx] || '0', 10) || 0);
+                      // Use the state value directly instead of getElementById
+                      const lastVal = parseInt(existing[lastVisibleIdx] || '0', 10) || 0;
                       if (lastVal <= 0) return;
 
                       while (existing.length < currentVisible + 1) existing.push('');
@@ -8503,14 +8571,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     Enter XP needed to reach each level (Levels 1-25). Level automatically updates based on current XP.
                   </div>
                   <div className="space-y-2">
-                    {char.xpTable.map((xp, i) => (
+                    {xpTableForm.map((xp, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2">
                         <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
                         <input
                           type="text" inputMode="numeric"
-                          defaultValue={xp}
+                          value={xp === 0 ? '' : xp}
+                          onChange={(e) => updateXpTableForm(i, parseInt(e.target.value) || 0)}
                           className="flex-1 p-2 bg-gray-700 rounded text-white"
-                          id={`xp-level-${i}`}
                         />
                         <span className="text-xs text-gray-400">XP</span>
                       </div>
@@ -8518,12 +8586,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </div>
                   <button
                     onClick={() => {
-                      const rawTable = char.xpTable.map((_, i) =>
-                        parseInt(document.getElementById(`xp-level-${i}`).value) || 0
-                      );
-
                       // Enforce strictly increasing XP per level
-                      const newTable = [...rawTable];
+                      const newTable = [...xpTableForm];
                       for (let i = 1; i < newTable.length; i++) {
                         if (newTable[i] <= newTable[i - 1]) {
                           newTable[i] = newTable[i - 1] + 1;
@@ -9544,25 +9608,22 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                 <div>
                   <div className="text-sm text-gray-400 mb-3">Set the number of spell slots available for each level.</div>
                   <div className="space-y-2">
-                    {(char.spellSlots || [0,0,0,0,0,0,0,0,0,0]).map((slots, level) => (
+                    {spellSlotsForm.map((slots, level) => (
                       <div key={level} className="flex items-center gap-2">
                         <label className="w-32 text-sm font-bold">{level === 0 ? 'Cantrips' : `Level ${level}`}:</label>
                         <input
                           type="text" inputMode="numeric"
                           min="0"
-                          defaultValue={slots}
+                          value={slots === 0 ? '' : slots}
+                          onChange={(e) => updateSpellSlotsForm(level, parseInt(e.target.value) || 0)}
                           className="flex-1 p-2 bg-gray-700 rounded text-white"
-                          id={`spell-slot-${level}`}
                         />
                       </div>
                     ))}
                   </div>
                   <button
                     onClick={() => {
-                      const newSlots = (char.spellSlots || [0,0,0,0,0,0,0,0,0,0]).map((_, level) => 
-                        parseInt(document.getElementById(`spell-slot-${level}`).value) || 0
-                      );
-                      updateChar({ spellSlots: newSlots });
+                      updateChar({ spellSlots: spellSlotsForm });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
