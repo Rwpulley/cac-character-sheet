@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef, Component, ErrorInfo, ReactNode, ChangeEvent } from 'react';
-import { Plus, Minus, Edit2, X, Trash2, Download, Upload, Info } from 'lucide-react';
+import { Plus, Minus, Edit2, X, Trash2, Download, Upload, Info, ChevronRight, ChevronDown } from 'lucide-react';
 
 // ===== CONSTANTS =====
 const STORAGE_KEY = 'cac-character-sheet-data';
@@ -172,6 +172,7 @@ interface Character {
   hp: number;
   maxHpBonus: number;
   hpByLevel: number[];
+  levelDrained?: boolean[];  // Track which levels are drained (unchecked = drained)
   hpDie: number;
   ac: number;
   acDexBonus: number;
@@ -1540,7 +1541,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Wallet modal form
   const [walletForm, setWalletForm] = useState({
-    cp: 0, sp: 0, gp: 0, pp: 0,
+    cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
     selectedCoinContainer: null as number | null
   });
   
@@ -1550,7 +1551,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   
   const resetWalletForm = useCallback(() => {
     // Don't reset selectedCoinContainer - only reset coin amounts
-    setWalletForm(prev => ({ ...prev, cp: 0, sp: 0, gp: 0, pp: 0 }));
+    setWalletForm(prev => ({ ...prev, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }));
   }, []);
 
   // Spell form (for newSpell/editSpell modals)
@@ -2053,20 +2054,29 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       }
     });
     
-    // Calculate coin weight and EV
-    // 16 coins = 1 lb, 160 coins = 1 EV
-    const totalGP = char.moneyGP || 0;
+    // Calculate coin weight and EV by denomination
+    // Weight: 16 coins = 1 lb for all coins
+    // But PP is worth 10x GP, so 16 PP = 160 GP worth but only 1 lb
+    // CP: 16 coins = 1 lb, worth 0.16 GP
+    // SP: 16 coins = 1 lb, worth 1.6 GP  
+    // GP: 16 coins = 1 lb, worth 16 GP
+    // PP: 16 coins = 1 lb, worth 160 GP
     
-    // Calculate coins stored in magical containers (these don't count toward weight/EV)
-    const coinsInMagicalContainers = (char.inventory || [])
+    const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+    const totalCoinCount = (wallet.platinum || 0) + (wallet.gold || 0) + (wallet.electrum || 0) + (wallet.silver || 0) + (wallet.copper || 0);
+    
+    // Calculate coins stored in magical containers (stored as GP value, convert back to approximate coins)
+    const coinsGPInMagicalContainers = (char.inventory || [])
       .filter(it => it.isContainer && it.isMagicalContainer)
       .reduce((sum, container) => sum + (Number(container.storedCoinsGP) || 0), 0);
     
+    // For magical container coins, assume they're stored as mixed denominations (use GP as proxy for coin count)
+    const coinsInContainersCount = Math.ceil(coinsGPInMagicalContainers);
+    
     // Only count coins NOT in magical containers
-    const coinsNotInContainers = Math.max(0, totalGP - coinsInMagicalContainers);
-    const coinCount = Math.ceil(Math.abs(coinsNotInContainers)); // Treat each GP as roughly 1 coin
-    const coinWeight = coinCount / 16; // 16 coins = 1 lb
-    const coinEV = coinCount / 160; // 160 coins = 1 EV
+    const coinsNotInContainersCount = Math.max(0, totalCoinCount - coinsInContainersCount);
+    const coinWeight = coinsNotInContainersCount / 16; // 16 coins = 1 lb
+    const coinEV = coinsNotInContainersCount / 160; // 160 coins = 1 EV
     
     // Include coin weight/EV only if setting is enabled
     const includeCoinWeight = char.includeCoinWeight ?? false;
@@ -2153,42 +2163,78 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     return base + armor + shield + mod + magic + misc + raceAC + bonus + effAC;
   }, [char?.acBase, char?.equippedShieldId, char?.equippedArmorIds, char?.equippedArmorId, char?.inventory, char?.acModAuto, char?.acMod, char?.acMagic, char?.acMisc, char?.acBonus, char?.equippedEffectItemIds, char?.raceAttributeMods, memoizedAttributeTotals.dex, memoizedEncumbrance.status]);
 
-  // Memoized XP/Level calculation
+  // Memoized XP/Level calculation (accounts for level drain)
   const memoizedLevelInfo = useMemo(() => {
-    if (!char) return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: 1 };
+    if (!char) return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: 1, drainedLevels: 0, effectiveLevel: 1, xpEarnedLevel: 1 };
     if (!Array.isArray(char.xpTable) || char.xpTable.length === 0) {
-      return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: (Number(char.class1Level) || 1) };
+      return { nextLevelXp: 0, progress: 0, canLevelUp: false, currentLevel: 1, drainedLevels: 0, effectiveLevel: 1, xpEarnedLevel: 1 };
     }
     
-    let currentLevel = 1;
+    // Calculate level earned from XP
+    // xpTable[0] = 0 (level 1), xpTable[1] = 2000 (level 2), xpTable[2] = 4000 (level 3), etc.
+    let xpEarnedLevel = 1;
     for (let i = char.xpTable.length - 1; i >= 0; i--) {
       if (char.currentXp >= char.xpTable[i]) {
-        currentLevel = i + 1;
+        xpEarnedLevel = i + 1; // Index 0 = level 1, index 1 = level 2, etc.
         break;
       }
     }
     
-    const nextLevelXp = char.xpTable[currentLevel] || char.xpTable[char.xpTable.length - 1];
-    const prevLevelXp = char.xpTable[currentLevel - 1] || 0;
-    const xpIntoLevel = char.currentXp - prevLevelXp;
-    const xpNeededForLevel = nextLevelXp - prevLevelXp;
-    const progress = xpNeededForLevel > 0 ? ((xpIntoLevel / xpNeededForLevel) * 100).toFixed(1) : 0;
+    // Count drained levels
+    const drainedLevels = (char.levelDrained || []).filter(d => d === true).length;
+    
+    // Effective level (XP-earned level minus drained)
+    const effectiveLevel = Math.max(1, xpEarnedLevel - drainedLevels);
+    
+    // For XP progress bar: show progress toward NEXT level after current XP-earned level
+    // Current level index = xpEarnedLevel - 1 (since level 1 = index 0)
+    // Next level index = xpEarnedLevel (level 2 = index 1, etc.)
+    const currentLevelIndex = xpEarnedLevel - 1;
+    const nextLevelIndex = Math.min(xpEarnedLevel, char.xpTable.length - 1);
+    
+    const currentLevelXp = char.xpTable[currentLevelIndex] || 0;
+    const nextLevelXp = char.xpTable[nextLevelIndex] || char.xpTable[char.xpTable.length - 1];
+    
+    // Progress within current level toward next
+    const xpIntoLevel = char.currentXp - currentLevelXp;
+    const xpNeededForLevel = nextLevelXp - currentLevelXp;
+    const progress = xpNeededForLevel > 0 ? Math.min(100, ((xpIntoLevel / xpNeededForLevel) * 100)) : 100;
+    
+    // Can level up if you have unfilled HP slots for levels you've earned
+    const hpLevelsFilled = (char.hpByLevel || []).filter(hp => hp > 0).length;
+    const canLevelUp = xpEarnedLevel > hpLevelsFilled;
     
     return { 
       nextLevelXp, 
-      progress: Math.min(100, progress), 
-      canLevelUp: char.currentXp >= nextLevelXp,
-      currentLevel
+      progress: Number(progress.toFixed(1)), 
+      canLevelUp,
+      currentLevel: xpEarnedLevel,  // Level based on XP
+      drainedLevels,
+      effectiveLevel,
+      xpEarnedLevel
     };
-  }, [char?.xpTable, char?.currentXp, char?.class1Level]);
+  }, [char?.xpTable, char?.currentXp, char?.levelDrained, char?.hpByLevel]);
 
-  // Memoized max HP calculation
+  // Memoized max HP calculation (accounts for level drain)
   const memoizedMaxHP = useMemo(() => {
     if (!char || !char.hpByLevel) return char?.maxHp || 0;
-    const levelHP = char.hpByLevel.reduce((sum, hp) => sum + hp, 0);
+    const levelDrained = char.levelDrained || [];
+    // Only sum HP from levels that are NOT drained (drained = true means level is lost)
+    const levelHP = char.hpByLevel.reduce((sum, hp, idx) => {
+      const isDrained = levelDrained[idx] === true;
+      return sum + (isDrained ? 0 : hp);
+    }, 0);
     const bonusHP = char.hpBonus || 0;
     return levelHP + bonusHP;
-  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp]);
+  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp, char?.levelDrained]);
+  
+  // Calculate effective level (actual level minus drained levels)
+  const effectiveLevel = useMemo(() => {
+    if (!char) return 0;
+    const totalLevel = (char.class1Level || 0) + (char.class2Level || 0);
+    const drainedCount = (char.levelDrained || []).filter(d => d === true).length;
+    return Math.max(1, totalLevel - drainedCount);
+  }, [char?.class1Level, char?.class2Level, char?.levelDrained]);
 
   // ===== MEMOIZED SORTED LISTS =====
   // These prevent re-sorting on every render
@@ -4008,6 +4054,9 @@ if (editModal.type === 'acTracking' && char) {
                 <div className="flex items-center gap-2">
                   <div className="text-lg">
                     {char.class1} {currentLevel}
+                    {memoizedLevelInfo.drainedLevels > 0 && (
+                      <span className="text-red-400 text-sm ml-1">(Eff: {memoizedLevelInfo.effectiveLevel})</span>
+                    )}
                     {char.class2 && <div>{char.class2} {char.class2Level}</div>}
                     {canLevelUp && <span className="text-green-400 ml-2">⬆ LEVEL UP!</span>}
                   </div>
@@ -4039,6 +4088,12 @@ if (editModal.type === 'acTracking' && char) {
                     <Plus size={16} />
                   </button>
                 </div>
+                {/* Level drain indicator */}
+                {memoizedLevelInfo.drainedLevels > 0 && (
+                  <div className="text-xs text-red-400 mb-1">
+                    ⚠️ {memoizedLevelInfo.drainedLevels} level{memoizedLevelInfo.drainedLevels !== 1 ? 's' : ''} drained
+                  </div>
+                )}
                 <div className="flex gap-1">
                   <button onClick={openHpModal} className="flex-1 px-2 py-1 bg-gray-600 rounded text-xs hover:bg-gray-500">
                     Edit HP
@@ -6882,15 +6937,90 @@ if (editModal.type === 'acTracking' && char) {
                   Use Wallet
                 </button>
               </div>
-              <div className="text-2xl">{char.moneyGP.toFixed(2)} GP</div>
-              {/* Coin weight/EV display - only show when included in totals */}
-              {char.includeCoinWeight && (
-                <div className="text-sm text-gray-400 mt-2">
-                  <span>Coin Weight: {memoizedEncumbrance.coinWeight.toFixed(2)} lb</span>
-                  <span className="mx-2">•</span>
-                  <span>Coin EV: {memoizedEncumbrance.coinEV.toFixed(1)}</span>
-                </div>
-              )}
+              
+              {/* Wallet breakdown with item worth */}
+              {(() => {
+                const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                const totalGPValue = ((wallet.platinum || 0) * 10) + ((wallet.electrum || 0) * 5) + (wallet.gold || 0) + ((wallet.silver || 0) * 0.1) + ((wallet.copper || 0) * 0.01);
+                
+                // Calculate item worth
+                const itemsWithWorth = (char.inventory || []).filter(item => {
+                  const worthAmount = Number(item.worthAmount) || 0;
+                  return worthAmount > 0;
+                });
+                
+                const totalItemWorthGP = itemsWithWorth.reduce((sum, item) => {
+                  const worthAmount = Number(item.worthAmount) || 0;
+                  const worthUnit = String(item.worthUnit || 'gp').toLowerCase();
+                  const qty = Number(item.quantity) || 1;
+                  let gpValue = 0;
+                  if (worthUnit === 'cp') gpValue = worthAmount * 0.01;
+                  else if (worthUnit === 'sp') gpValue = worthAmount * 0.1;
+                  else if (worthUnit === 'ep') gpValue = worthAmount * 5;
+                  else if (worthUnit === 'pp') gpValue = worthAmount * 10;
+                  else gpValue = worthAmount; // gp
+                  return sum + (gpValue * qty);
+                }, 0);
+                
+                const totalNetWorth = totalGPValue + totalItemWorthGP;
+                
+                return (
+                  <>
+                    <div className="text-2xl font-bold text-yellow-400">{totalGPValue.toFixed(2)} GP</div>
+                    
+                    {/* Coin weight/EV display - only show when included in totals */}
+                    {char.includeCoinWeight && (
+                      <div className="text-sm text-gray-400 mt-1">
+                        <span>Coin Weight: {memoizedEncumbrance.coinWeight.toFixed(2)} lb</span>
+                        <span className="mx-2">•</span>
+                        <span>Coin EV: {memoizedEncumbrance.coinEV.toFixed(1)}</span>
+                      </div>
+                    )}
+                    
+                    {/* Item Worth */}
+                    {itemsWithWorth.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-600">
+                        <button
+                          onClick={() => setExpandedInventoryCategories(prev => ({ ...prev, _itemWorth: !prev._itemWorth }))}
+                          className="w-full flex items-center justify-between text-left hover:bg-gray-600 rounded p-1 -m-1"
+                        >
+                          <span className="text-sm text-gray-400">
+                            Item Worth: <span className="text-white font-semibold">{totalItemWorthGP.toFixed(2)} GP</span>
+                            <span className="text-gray-500 ml-2">({itemsWithWorth.length} item{itemsWithWorth.length !== 1 ? 's' : ''})</span>
+                          </span>
+                          {expandedInventoryCategories._itemWorth ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                        </button>
+                        
+                        {expandedInventoryCategories._itemWorth && (
+                          <div className="mt-2 space-y-1 text-sm">
+                            {itemsWithWorth.map(item => {
+                              const worthAmount = Number(item.worthAmount) || 0;
+                              const worthUnit = String(item.worthUnit || 'gp').toUpperCase();
+                              const qty = Number(item.quantity) || 1;
+                              return (
+                                <div key={item.id} className="flex justify-between text-gray-300 pl-2">
+                                  <span>{item.name} {qty > 1 ? `×${qty}` : ''}</span>
+                                  <span className="text-yellow-400">{worthAmount * qty} {worthUnit}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Total Net Worth */}
+                    {itemsWithWorth.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-600">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-400">Total Net Worth:</span>
+                          <span className="text-xl font-bold text-green-400">{totalNetWorth.toFixed(2)} GP</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             <div className="flex items-center justify-between">
@@ -8553,7 +8683,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 {editModal.type === 'hpTracking' && (
                 <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
                   <div className="text-sm text-gray-400 mb-3">
-                    Enter HP gained at each level. Max HP is the sum of all levels + bonus. Total Max HP: <span className="font-bold text-white">{calculateMaxHP()}</span>
+                    HP levels unlock as you gain XP. Roll or enter HP for each level you've earned. Total Max HP: <span className="font-bold text-white">{calculateMaxHP()}</span>
+                  </div>
+                  
+                  {/* Level drain explanation */}
+                  <div className="mb-3 p-2 bg-gray-900 rounded text-xs text-gray-400">
+                    <div className="mb-1"><span className="text-blue-400 font-semibold">🔒 Locked Levels:</span> Levels you haven't reached via XP are locked. Gain more XP to unlock them.</div>
+                    <div><span className="text-yellow-400 font-semibold">☐ Level Drain:</span> Uncheck the box to mark a level as drained (from spells/curses). Drained levels lose their HP and shift XP requirements. Re-check to restore.</div>
                   </div>
                   
                   <div className="mb-3 p-2 bg-gray-900 rounded">
@@ -8593,67 +8729,115 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const levels = (Array.isArray(hpDraftLevels) && hpDraftLevels.length
                         ? hpDraftLevels
                         : Array.from({ length: rolls.length }, () => 0));
-                      let lastFilled = -1;
-                      for (let i = 0; i < rolls.length; i++) { if ((parseInt(rolls[i] || '0', 10) || 0) > 0) lastFilled = i; }
-                      const effectiveLen = Math.max(3, lastFilled + 1);
-                      const showCount = Math.min(rolls.length, Math.max(effectiveLen, hpLevelsShown));
+                      const levelDrained = char.levelDrained || [];
+                      
+                      // Calculate max level earned via XP
+                      let xpEarnedLevel = 1;
+                      if (Array.isArray(char.xpTable) && char.xpTable.length > 0) {
+                        for (let lvl = char.xpTable.length - 1; lvl >= 0; lvl--) {
+                          if (char.currentXp >= char.xpTable[lvl]) {
+                            xpEarnedLevel = lvl + 1;
+                            break;
+                          }
+                        }
+                      }
+                      
+                      // Show up to XP-earned level + 1 (so they can see the next locked level)
+                      const showCount = Math.max(3, xpEarnedLevel + 1, hpLevelsShown);
                       const conMod = calcMod(getAttributeTotal('con'));
+                      
+                      // Ensure rolls array is long enough
+                      while (rolls.length < showCount) rolls.push('');
+                      
                       return rolls.slice(0, showCount).map((rawStr, i) => {
+                        const levelNum = i + 1;
                         const prevOk = i === 0 || ((parseInt(rolls[i - 1] || '0', 10) || 0) > 0);
+                        const hasHP = (parseInt(rawStr || '0', 10) || 0) > 0;
+                        const isDrained = levelDrained[i] === true;
+                        
+                        // Level is locked if player hasn't earned it via XP
+                        const isLocked = levelNum > xpEarnedLevel;
+                        const canEdit = prevOk && !isLocked;
+                        
                         return (
-                        <div key={i} className="flex flex-wrap items-center gap-2">
-                          <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
+                        <div key={i} className={`flex flex-wrap items-center gap-2 ${isLocked ? 'opacity-50' : ''}`}>
+                          {/* Level drain checkbox - only show if level has HP and is not locked */}
+                          {hasHP && !isLocked ? (
+                            <label className="flex items-center justify-center w-8 h-8 flex-shrink-0 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!isDrained}
+                                onChange={(e) => {
+                                  const newDrained = [...(char.levelDrained || [])];
+                                  // Ensure array is long enough
+                                  while (newDrained.length <= i) newDrained.push(false);
+                                  const willBeDrained = !e.target.checked;
+                                  newDrained[i] = willBeDrained;
+                                  
+                                  // Calculate new max HP
+                                  const newMaxHP = char.hpByLevel.reduce((sum, hp, idx) => {
+                                    const drained = newDrained[idx] === true;
+                                    return sum + (drained ? 0 : hp);
+                                  }, 0) + (char.hpBonus || 0);
+                                  
+                                  // Adjust current HP if it exceeds new max
+                                  const newCurrentHP = Math.min(char.hp, newMaxHP);
+                                  
+                                  updateChar({ 
+                                    levelDrained: newDrained,
+                                    hp: newCurrentHP
+                                  });
+                                }}
+                                className="w-5 h-5"
+                                title={isDrained ? "Level drained - check to restore" : "Uncheck to drain this level"}
+                              />
+                            </label>
+                          ) : (
+                            <div className="w-8 h-8 flex-shrink-0" /> 
+                          )}
+                          <label className={`w-16 text-sm font-bold ${isDrained ? 'text-red-400 line-through' : ''} ${isLocked ? 'text-gray-500' : ''}`}>
+                            Level {levelNum}:
+                          </label>
                           <input
                             type="text" inputMode="numeric"
                             value={rawStr ?? ''}
-                            disabled={!prevOk}
+                            disabled={!canEdit}
                             onChange={(e) => {
-                              if (!prevOk) return;
+                              if (!canEdit) return;
                               const val = parseInt(e.target.value || '0', 10) || 0;
 
                               // Update raw rolls (the textbox values)
                               const nextRolls = rolls.slice();
                               nextRolls[i] = val > 0 ? String(val) : '';
-                              if (val > 0 && i === (hpLevelsShown - 1)) {
-                                while (nextRolls.length < hpLevelsShown + 1) nextRolls.push('');
-                                setHpLevelsShown(hpLevelsShown + 1);
-                              }
                               setHpDraftRolls(nextRolls);
 
                               // Update totals (raw + CON), stored in hpDraftLevels
                               const nextLevels = levels.slice();
                               nextLevels[i] = val > 0 ? Math.max(1, val + conMod) : 0;
-                              if (val > 0 && i === (hpLevelsShown - 1)) {
-                                while (nextLevels.length < hpLevelsShown + 1) nextLevels.push(0);
-                              }
                               setHpDraftLevels(nextLevels);
                             }}
-                            className={`flex-1 p-2 rounded text-white ${prevOk ? "bg-gray-700" : "bg-gray-900 text-gray-500 cursor-not-allowed"}`}
+                            className={`flex-1 p-2 rounded text-white ${canEdit ? "bg-gray-700" : "bg-gray-900 text-gray-500 cursor-not-allowed"} ${isDrained ? 'opacity-50' : ''}`}
                             id={`hp-level-${i}`}
                           />
                           <button
                             type="button"
-                            disabled={!prevOk}
+                            disabled={!canEdit}
                             onClick={() => {
-                              if (!prevOk) return;
+                              if (!canEdit) return;
                               const die = Number(hpDieDraft) || 12;
                               // Roll the hit die (raw), CON mod is applied on save
                               const rawRoll = rollDice(die);
                               const next = rolls.slice();
                               next[i] = String(rawRoll);
-                              if (rawRoll > 0 && i === (hpLevelsShown - 1)) {
-                                while (next.length < hpLevelsShown + 1) next.push('');
-                                setHpLevelsShown(hpLevelsShown + 1);
-                              }
                               setHpDraftRolls(next);
                             }}
-                            className={`px-3 py-2 rounded text-sm font-semibold ${prevOk ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-900 text-gray-500 cursor-not-allowed"}`}
-                            title={`Roll d${hpDieDraft || 12} + CON mod`}
+                            className={`px-3 py-2 rounded text-sm font-semibold ${canEdit ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-900 text-gray-500 cursor-not-allowed"}`}
+                            title={isLocked ? `Reach level ${levelNum} to unlock` : `Roll d${hpDieDraft || 12} + CON mod`}
                           >
                             Roll
                           </button>
                           <span className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0">(CON {conMod >= 0 ? '+' : ''}{conMod})</span>
-                          <span className="text-xs text-gray-300 whitespace-nowrap flex-shrink-0">
+                          <span className={`text-xs whitespace-nowrap flex-shrink-0 ${isDrained ? 'text-red-400 line-through' : 'text-gray-300'}`}>
                             Total: {
                               (() => {
                                 const raw = parseInt((rawStr || '0'), 10) || 0;
@@ -8662,41 +8846,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               })()
                             }
                           </span>
-                          {!prevOk && <span className="text-xs text-gray-500">(fill previous level first)</span>}
+                          {isDrained && <span className="text-xs text-red-400">(DRAINED)</span>}
+                          {isLocked && <span className="text-xs text-yellow-400">🔒 Locked (need {char.xpTable?.[i] || '?'} XP)</span>}
+                          {!canEdit && !isLocked && <span className="text-xs text-gray-500">(fill previous level first)</span>}
                         </div>
                       );
                       });
                     })()}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const existing = (Array.isArray(hpDraftRolls) && hpDraftRolls.length ? hpDraftRolls.slice() : ['', '', '']);
-                      const currentVisible = Math.max(3, hpLevelsShown);
-                      const lastVisibleIdx = currentVisible - 1;
-                      // Use the state value directly instead of getElementById
-                      const lastVal = parseInt(existing[lastVisibleIdx] || '0', 10) || 0;
-                      if (lastVal <= 0) return;
-
-                      while (existing.length < currentVisible + 1) existing.push('');
-
-                      const newMax = existing.reduce((sum, v) => sum + (Number(v) || 0), 0) + (Number(char.hpBonus) || 0);
-                      setHpDraftRolls(existing);
-                      // (Optional) update max HP preview immediately
-                      const conMod2 = calcMod(getAttributeTotal('con'));
-                      const previewMax = existing.reduce((sum, v) => {
-                        const raw = parseInt(v || '0', 10) || 0;
-                        if (raw <= 0) return sum;
-                        return sum + Math.max(1, raw + conMod2);
-                      }, 0) + (Number(char.hpBonus) || 0);
-                      updateChar({ maxHp: previewMax, hp: Math.min(char.hp, previewMax) });
-                      setHpLevelsShown(currentVisible + 1);
-                    }}
-                    className="w-full py-2 bg-gray-700 rounded hover:bg-gray-600 mt-2 font-semibold"
-                  >
-                    Add next level
-                  </button>
                   <button
                     onClick={() => {
                       const conMod = calcMod(getAttributeTotal('con'));
@@ -9303,14 +9461,58 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </label>
                   </div>
 
-                  <div className="text-lg text-gray-300 mb-4">
-                    Current: <span className="font-bold text-white text-2xl">{char.moneyGP.toFixed(2)} GP</span>
-                    <div className="text-sm text-gray-400 mt-2">
-                      Coin Weight: {memoizedEncumbrance.coinWeight.toFixed(2)} lb • Coin EV: {memoizedEncumbrance.coinEV.toFixed(1)}
-                    </div>
-                    <div className="text-xs mt-2 text-gray-500">Conversion: 10 CP = 1 SP, 10 SP = 1 GP, 10 GP = 1 PP</div>
-                    <div className="text-xs text-gray-500">Weight: 16 coins = 1 lb, 160 coins = 1 EV</div>
-                  </div>
+                  {/* Current Coin Breakdown */}
+                  {(() => {
+                    const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                    const pp = wallet.platinum || 0;
+                    const gp = wallet.gold || 0;
+                    const ep = wallet.electrum || 0;
+                    const sp = wallet.silver || 0;
+                    const cp = wallet.copper || 0;
+                    const totalCoins = pp + gp + ep + sp + cp;
+                    const totalGPValue = (pp * 10) + gp + (ep * 5) + (sp * 0.1) + (cp * 0.01);
+                    const coinWeight = totalCoins / 16;
+                    const coinEV = totalCoins / 160;
+                    
+                    return (
+                      <div className="bg-gray-900 rounded p-3 mb-4">
+                        <div className="text-center mb-3">
+                          <div className="text-2xl font-bold text-yellow-400">{totalGPValue.toFixed(2)} GP</div>
+                          <div className="text-xs text-gray-500">Total Value</div>
+                        </div>
+                        
+                        <div className="grid grid-cols-5 gap-2 text-center mb-3">
+                          <div className="bg-gray-800 rounded p-2">
+                            <div className="text-lg font-bold text-gray-300">{pp}</div>
+                            <div className="text-xs text-gray-500">PP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2">
+                            <div className="text-lg font-bold text-yellow-400">{gp}</div>
+                            <div className="text-xs text-gray-500">GP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2">
+                            <div className="text-lg font-bold text-blue-300">{ep}</div>
+                            <div className="text-xs text-gray-500">EP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2">
+                            <div className="text-lg font-bold text-gray-400">{sp}</div>
+                            <div className="text-xs text-gray-500">SP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2">
+                            <div className="text-lg font-bold text-orange-400">{cp}</div>
+                            <div className="text-xs text-gray-500">CP</div>
+                          </div>
+                        </div>
+                        
+                        <div className="text-xs text-gray-400 text-center">
+                          {totalCoins} coins • {coinWeight.toFixed(2)} lb • {coinEV.toFixed(2)} EV
+                        </div>
+                        <div className="text-xs text-gray-500 text-center mt-1">
+                          16 coins = 1 lb • 160 coins = 1 EV
+                        </div>
+                      </div>
+                    );
+                  })()}
                   
                   {/* Coins stored in magical containers */}
                   {(() => {
@@ -9324,7 +9526,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     // Calculate limits for selected container
                     let maxCoinsInBag = 0;
                     let currentCoinsInBag = 0;
-                    let totalAvailableCoins = Math.round(char.moneyGP * 100) / 100;
+                    const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                    const totalGPValue = ((wallet.platinum || 0) * 10) + ((wallet.electrum || 0) * 5) + (wallet.gold || 0) + ((wallet.silver || 0) * 0.1) + ((wallet.copper || 0) * 0.01);
+                    let totalAvailableCoins = Math.round(totalGPValue * 100) / 100;
                     
                     if (selectedContainer) {
                       const info = getContainerInfo(selectedContainer.id);
@@ -9332,8 +9536,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       const maxWeight = Number(selectedContainer.containerMaxWeight) || Infinity;
                       const weightUsedByItems = info.totalWeight - info.storedCoinsWeight;
                       const availableWeightForCoins = maxWeight === Infinity ? Infinity : (maxWeight - weightUsedByItems);
-                      maxCoinsInBag = maxWeight === Infinity ? Math.round((char.moneyGP + currentCoinsInBag) * 100) / 100 : Math.floor(availableWeightForCoins * 16);
-                      totalAvailableCoins = Math.round((char.moneyGP + currentCoinsInBag) * 100) / 100;
+                      maxCoinsInBag = maxWeight === Infinity ? Math.round((totalGPValue + currentCoinsInBag) * 100) / 100 : Math.floor(availableWeightForCoins * 16);
+                      totalAvailableCoins = Math.round((totalGPValue + currentCoinsInBag) * 100) / 100;
                     }
                     
                     const sliderMax = selectedContainer ? Math.round(Math.min(maxCoinsInBag, totalAvailableCoins) * 100) / 100 : 0;
@@ -9366,7 +9570,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         {selectedContainer && (
                           <div className="space-y-2">
                             <div className="flex justify-between text-xs text-gray-400">
-                              <span>Wallet: {char.moneyGP.toFixed(2)} GP</span>
+                              <span>Wallet: {totalGPValue.toFixed(2)} GP</span>
                               <span>In {selectedContainer.name}: {currentCoinsInBag.toFixed(2)} GP</span>
                             </div>
                             
@@ -9381,9 +9585,43 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                 const newCoinsInBag = Math.round(Number(target.value) * 100) / 100;
                                 const diff = Math.round((newCoinsInBag - currentCoinsInBag) * 100) / 100;
                                 
-                                // Use functional update to avoid stale closure issues
+                                // Deduct from gold first, then other denominations
+                                const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                                let newWallet = { ...wallet };
+                                
+                                if (diff > 0) {
+                                  // Moving coins TO bag - deduct from wallet
+                                  let remaining = diff;
+                                  // Deduct from copper first (least valuable)
+                                  const cpToDeduct = Math.min(newWallet.copper || 0, Math.floor(remaining * 100));
+                                  newWallet.copper = (newWallet.copper || 0) - cpToDeduct;
+                                  remaining -= cpToDeduct * 0.01;
+                                  
+                                  const spToDeduct = Math.min(newWallet.silver || 0, Math.floor(remaining * 10));
+                                  newWallet.silver = (newWallet.silver || 0) - spToDeduct;
+                                  remaining -= spToDeduct * 0.1;
+                                  
+                                  const epToDeduct = Math.min(newWallet.electrum || 0, Math.floor(remaining / 5));
+                                  newWallet.electrum = (newWallet.electrum || 0) - epToDeduct;
+                                  remaining -= epToDeduct * 5;
+                                  
+                                  const gpToDeduct = Math.min(newWallet.gold || 0, Math.floor(remaining));
+                                  newWallet.gold = (newWallet.gold || 0) - gpToDeduct;
+                                  remaining -= gpToDeduct;
+                                  
+                                  const ppToDeduct = Math.min(newWallet.platinum || 0, Math.ceil(remaining / 10));
+                                  newWallet.platinum = (newWallet.platinum || 0) - ppToDeduct;
+                                } else if (diff < 0) {
+                                  // Moving coins FROM bag - add to wallet as gold
+                                  newWallet.gold = (newWallet.gold || 0) + Math.abs(diff);
+                                }
+                                
+                                // Recalculate moneyGP
+                                const newMoneyGP = ((newWallet.platinum || 0) * 10) + ((newWallet.electrum || 0) * 5) + (newWallet.gold || 0) + ((newWallet.silver || 0) * 0.1) + ((newWallet.copper || 0) * 0.01);
+                                
                                 updateChar({
-                                  moneyGP: Math.round((char.moneyGP - diff) * 100) / 100,
+                                  wallet: newWallet,
+                                  moneyGP: Math.round(newMoneyGP * 100) / 100,
                                   inventory: char.inventory.map(i => 
                                     i.id === selectedContainerId ? { ...i, storedCoinsGP: newCoinsInBag } : i
                                   )
@@ -9414,62 +9652,136 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     );
                   })()}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">Copper (CP)</label>
-                      <DomStepper value={walletForm.cp} onChange={(v) => updateWalletForm({ cp: v })} step={1} min={0} allowManual />
+                  {/* Add/Spend Section */}
+                  <div className="border-t border-gray-700 pt-4">
+                    <div className="text-sm text-gray-400 mb-2">Add or Spend Coins</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">PP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.pp || ''}
+                          onChange={(e) => updateWalletForm({ pp: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">GP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.gp || ''}
+                          onChange={(e) => updateWalletForm({ gp: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">EP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.ep || ''}
+                          onChange={(e) => updateWalletForm({ ep: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">SP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.sp || ''}
+                          onChange={(e) => updateWalletForm({ sp: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">CP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.cp || ''}
+                          onChange={(e) => updateWalletForm({ cp: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">Silver (SP)</label>
-                      <DomStepper value={walletForm.sp} onChange={(v) => updateWalletForm({ sp: v })} step={1} min={0} allowManual />
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => {
+                          const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                          const newWallet = {
+                            platinum: (wallet.platinum || 0) + (walletForm.pp || 0),
+                            gold: (wallet.gold || 0) + (walletForm.gp || 0),
+                            electrum: (wallet.electrum || 0) + (walletForm.ep || 0),
+                            silver: (wallet.silver || 0) + (walletForm.sp || 0),
+                            copper: (wallet.copper || 0) + (walletForm.cp || 0)
+                          };
+                          const newMoneyGP = (newWallet.platinum * 10) + newWallet.gold + (newWallet.electrum * 5) + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
+                          
+                          const addedGP = ((walletForm.pp || 0) * 10) + (walletForm.gp || 0) + ((walletForm.ep || 0) * 5) + ((walletForm.sp || 0) * 0.1) + ((walletForm.cp || 0) * 0.01);
+                          if (addedGP > 0) {
+                            updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
+                            showToast(`Added ${addedGP.toFixed(2)} GP worth`, 'success');
+                          }
+                          resetWalletForm();
+                        }}
+                        className="py-3 bg-green-600 rounded hover:bg-green-700 font-semibold"
+                      >
+                        Add
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                          const spendPP = walletForm.pp || 0;
+                          const spendGP = walletForm.gp || 0;
+                          const spendEP = walletForm.ep || 0;
+                          const spendSP = walletForm.sp || 0;
+                          const spendCP = walletForm.cp || 0;
+                          
+                          // Check if we have enough of each denomination
+                          if (spendPP > (wallet.platinum || 0) || 
+                              spendGP > (wallet.gold || 0) || 
+                              spendEP > (wallet.electrum || 0) ||
+                              spendSP > (wallet.silver || 0) || 
+                              spendCP > (wallet.copper || 0)) {
+                            showToast('Not enough coins of that denomination!', 'error');
+                            return;
+                          }
+                          
+                          const newWallet = {
+                            platinum: (wallet.platinum || 0) - spendPP,
+                            gold: (wallet.gold || 0) - spendGP,
+                            electrum: (wallet.electrum || 0) - spendEP,
+                            silver: (wallet.silver || 0) - spendSP,
+                            copper: (wallet.copper || 0) - spendCP
+                          };
+                          const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
+                          
+                          const spentGP = (spendPP * 10) + (spendEP * 5) + spendGP + (spendSP * 0.1) + (spendCP * 0.01);
+                          if (spentGP > 0) {
+                            updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
+                            showToast(`Spent ${spentGP.toFixed(2)} GP worth`, 'success');
+                          }
+                          resetWalletForm();
+                        }}
+                        className="py-3 bg-red-600 rounded hover:bg-red-700 font-semibold"
+                      >
+                        Spend
+                      </button>
                     </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">Gold (GP)</label>
-                      <DomStepper value={walletForm.gp} onChange={(v) => updateWalletForm({ gp: v })} step={1} min={0} allowManual />
+                    
+                    <div className="text-xs text-gray-500 mt-2 text-center">
+                      Conversion: 100 CP = 10 SP = 1 GP • 5 GP = 1 EP • 2 EP = 1 PP (10 GP)
                     </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-1">Platinum (PP)</label>
-                      <DomStepper value={walletForm.pp} onChange={(v) => updateWalletForm({ pp: v })} step={1} min={0} allowManual />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 mt-4">
-                    <button
-                      onClick={() => {
-                        const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
-
-                        if (totalGP !== 0) {
-                          updateChar({ moneyGP: char.moneyGP + totalGP });
-                          showToast(`Added ${totalGP.toFixed(2)} GP`, 'success');
-                        }
-
-                        resetWalletForm();
-}}
-                      className="py-3 bg-green-600 rounded hover:bg-green-700 font-semibold"
-                    >
-                      Add
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        const totalGP = (walletForm.cp / 100) + (walletForm.sp / 10) + walletForm.gp + (walletForm.pp * 10);
-
-                        if (totalGP > char.moneyGP) {
-                          showToast(`Insufficient funds! Need ${(totalGP - char.moneyGP).toFixed(2)} more GP.`, 'error');
-                          return;
-                        }
-
-                        if (totalGP !== 0) {
-                          updateChar({ moneyGP: char.moneyGP - totalGP });
-                          showToast(`Spent ${totalGP.toFixed(2)} GP`, 'success');
-                        }
-
-                        resetWalletForm();
-}}
-                      className="py-3 bg-red-600 rounded hover:bg-red-700 font-semibold"
-                    >
-                      Spend
-                    </button>
                   </div>
 
                   <button
@@ -9551,6 +9863,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <option value="cp">CP</option>
                         <option value="sp">SP</option>
                         <option value="gp">GP</option>
+                        <option value="ep">EP</option>
                         <option value="pp">PP</option>
                       </select>
                     </div>
