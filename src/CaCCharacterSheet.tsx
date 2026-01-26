@@ -75,6 +75,7 @@ interface InventoryItem {
   weaponDamage?: string;
   weaponType?: string;
   acBonus?: number;
+  magicACBonus?: number;  // Magic bonus to AC for armor/shields
   magicCastingDescription?: string;
   capacity?: number;
   isWeaponEffect?: boolean;
@@ -1735,7 +1736,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     ev: '',         // Store as string for decimal/negative input
     worth: 0,
     worthUnit: 'gp',
-    acBonus: 0
+    acBonus: 0,
+    magicACBonus: 0
   });
   
   const updateItemForm = useCallback((updates) => {
@@ -1745,7 +1747,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const resetItemForm = useCallback(() => {
     setItemForm({
       name: '', description: '', quantity: 1, weightPer: '', ev: '',
-      worth: 0, worthUnit: 'gp', acBonus: 0
+      worth: 0, worthUnit: 'gp', acBonus: 0, magicACBonus: 0
     });
   }, []);
 
@@ -2123,19 +2125,24 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     if (!char) return 10;
     const base = char.acBase || 10;
     
-    // Shield
+    // Shield (base + magic bonus)
     let shield = 0;
+    let shieldMagic = 0;
     if (char.equippedShieldId) {
       const sItem = (char.inventory || []).find(i => String(i.id) === String(char.equippedShieldId));
       shield = Number(sItem?.acBonus) || 0;
+      shieldMagic = Number(sItem?.magicACBonus) || 0;
     }
     
-    // Armor
+    // Armor (base + magic bonus)
     const armorIds = Array.isArray(char.equippedArmorIds) ? char.equippedArmorIds : (char.equippedArmorId ? [char.equippedArmorId] : []);
-    const armor = armorIds.reduce((sum, aid) => {
+    let armor = 0;
+    let armorMagic = 0;
+    for (const aid of armorIds) {
       const aItem = (char.inventory || []).find(i => String(i.id) === String(aid));
-      return sum + (Number(aItem?.acBonus) || 0);
-    }, 0);
+      armor += Number(aItem?.acBonus) || 0;
+      armorMagic += Number(aItem?.magicACBonus) || 0;
+    }
     
     // Dex mod (removed if overburdened)
     let mod = (char.acModAuto !== false) ? calcMod(memoizedAttributeTotals.dex) : (char.acMod || 0);
@@ -2160,7 +2167,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const raceACMatch = (char.raceAttributeMods || []).find(x => String(x.attr).toLowerCase() === 'ac');
     const raceAC = raceACMatch ? (Number(raceACMatch.value) || 0) : 0;
     
-    return base + armor + shield + mod + magic + misc + raceAC + bonus + effAC;
+    return base + armor + armorMagic + shield + shieldMagic + mod + magic + misc + raceAC + bonus + effAC;
   }, [char?.acBase, char?.equippedShieldId, char?.equippedArmorIds, char?.equippedArmorId, char?.inventory, char?.acModAuto, char?.acMod, char?.acMagic, char?.acMisc, char?.acBonus, char?.equippedEffectItemIds, char?.raceAttributeMods, memoizedAttributeTotals.dex, memoizedEncumbrance.status]);
 
   // Memoized XP/Level calculation (accounts for level drain)
@@ -2752,7 +2759,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
         ev: editModal.item?.ev != null ? String(editModal.item.ev) : '',
         worth: editModal.item?.worthAmount ?? (editModal.item?.worthGP != null ? editModal.item.worthGP : 0),
         worthUnit: editModal.item?.worthUnit || (editModal.item?.worthGP != null ? 'gp' : 'gp'),
-        acBonus: Number(editModal.item?.acBonus) || 0
+        acBonus: Number(editModal.item?.acBonus) || 0,
+        magicACBonus: Number(editModal.item?.magicACBonus) || 0
       });
       setItemIsArmor(!!editModal.item?.isArmor);
       setItemIsShield(!!editModal.item?.isShield);
@@ -8924,10 +8932,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             Bonus: {(() => {
                               const armorIds = equippedArmorIds || [];
                               if (!armorIds.length) return 0;
-                              return armorIds.reduce((sum, id) => {
+                              let base = 0;
+                              let magic = 0;
+                              for (const id of armorIds) {
                                 const it = (char.inventory || []).find(i => String(i.id) === String(id));
-                                return sum + (Number(it?.acBonus) || 0);
-                              }, 0);
+                                base += Number(it?.acBonus) || 0;
+                                magic += Number(it?.magicACBonus) || 0;
+                              }
+                              return magic > 0 ? `${base} +${magic} magic` : base;
                             })()}
                           </div>
                         </div>
@@ -8949,7 +8961,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                       onChange={() => toggleEquippedArmor(it.id)}
                                       className="w-4 h-4"
                                     />
-                                    <span>{it.name} ({Number(it.acBonus) || 0 >= 0 ? '+' : ''}{Number(it.acBonus) || 0})</span>
+                                    <span>{it.name} (+{Number(it.acBonus) || 0}{(Number(it.magicACBonus) || 0) > 0 ? ` +${it.magicACBonus} magic` : ''})</span>
                                   </label>
                                 );
                               })}
@@ -8977,7 +8989,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <option value="">None</option>
                           {(char.inventory || []).filter(i => i.isShield).map((it) => (
                             <option key={it.id} value={String(it.id)}>
-                              {it.name} (+{Number(it.acBonus) || 0})
+                              {it.name} (+{Number(it.acBonus) || 0}{(Number(it.magicACBonus) || 0) > 0 ? ` +${it.magicACBonus} magic` : ''})
                             </option>
                           ))}
                         </select>
@@ -10153,7 +10165,23 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         placeholder="0"
                       />
                       <div className="text-xs text-gray-400 mt-1">
-                        This is the AC bonus the armor/shield provides (for AC Tracking dropdowns).
+                        Base AC bonus from the armor/shield.
+                      </div>
+                    </div>
+                  )}
+                  
+                  {(itemIsArmor || itemIsShield) && (
+                    <div className="mb-3">
+                      <label className="block text-sm text-gray-400 mb-1">Magic AC Bonus</label>
+                      <input
+                        type="text" inputMode="numeric"
+                        value={itemForm.magicACBonus === 0 ? '' : itemForm.magicACBonus}
+                        onChange={(e) => updateItemForm({ magicACBonus: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                        className="w-full p-2 bg-gray-700 rounded text-white"
+                        placeholder="0"
+                      />
+                      <div className="text-xs text-gray-400 mt-1">
+                        Magic enhancement bonus (e.g., +1, +2, +3 for magical armor/shields).
                       </div>
                     </div>
                   )}
@@ -10537,6 +10565,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         weaponDamageNumDice: itemIsWeapon ? (Number(itemWeaponDamageNumDice) || 1) : 1,
                         weaponDamageDieType: itemIsWeapon ? (Number(itemWeaponDamageDieType) || 8) : 8,
                         acBonus: (itemIsArmor || itemIsShield) ? itemForm.acBonus : 0,
+                        magicACBonus: (itemIsArmor || itemIsShield) ? itemForm.magicACBonus : 0,
                         hasAttrBonus: !!itemHasAttrBonus && (Array.isArray(itemStatBonuses) ? itemStatBonuses.length > 0 : false),
                         attrBonuses: (itemHasAttrBonus && Array.isArray(itemStatBonuses)) ? itemStatBonuses : [],
                         // Legacy single fields retained for backward compatibility (first bonus only)
