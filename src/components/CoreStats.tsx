@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Plus, Minus, Edit2 } from 'lucide-react';
-import { useCharacter, useCalculations } from '../../hooks';
+import { useCharacter, useCalculations } from '../hooks';
 
 interface CoreStatsProps {
   onEditHP?: () => void;
