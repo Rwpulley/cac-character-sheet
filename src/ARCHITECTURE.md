@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Castles & Crusades Character Sheet is currently a single-file React component (`CaCCharacterSheet_with_persistence.tsx`) at approximately 10,000 lines. This monolithic structure is intentional during active development to make rapid iteration easier. Future refactoring into separate components/hooks is planned.
+The Castles & Crusades Character Sheet is currently a single-file React component (`CaCCharacterSheet_with_persistence.tsx`) at approximately 10,000 lines. This monolithic structure is intentional during active development to make rapid iteration easier. Future refactoring into separate components/hooks is planned and is being worked on.
 
 ## File Structure
 
