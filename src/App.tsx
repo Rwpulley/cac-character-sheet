@@ -1,7 +1,7 @@
 // ===== MAIN APP COMPONENT =====
 
 import React, { useState } from 'react';
-import { CharacterProvider, useCharacter, useToast, useTheme } from './hooks';
+import { CharacterProvider, useCharacter, useToast, useTheme, ThemeProvider } from './hooks';
 import { 
   CharacterSelector, 
   TabBar, 
@@ -13,7 +13,7 @@ import {
 } from './components';
 import { TabId } from './utils/constants';
 
-// Main App Content (inside provider)
+// Main App Content (inside providers)
 const AppContent: React.FC = () => {
   const { char, selectCharacter } = useCharacter();
   const { isDarkTheme } = useTheme();
@@ -127,9 +127,11 @@ const AppContent: React.FC = () => {
 // App wrapper with providers
 const App: React.FC = () => {
   return (
-    <CharacterProvider>
-      <AppContent />
-    </CharacterProvider>
+    <ThemeProvider>
+      <CharacterProvider>
+        <AppContent />
+      </CharacterProvider>
+    </ThemeProvider>
   );
 };
 
