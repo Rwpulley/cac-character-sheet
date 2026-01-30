@@ -1,8 +1,8 @@
 // ===== HEADER COMPONENT =====
 
 import React from 'react';
-import { useCharacter } from '../../hooks';
-import { useTheme } from '../../hooks';
+import { useCharacter } from '../hooks';
+import { useTheme } from '../hooks';
 
 export const Header: React.FC = () => {
   const { char, updateChar } = useCharacter();
