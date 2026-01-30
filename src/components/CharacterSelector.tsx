@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { Plus, Trash2, Download, Upload, Edit2 } from 'lucide-react';
 import { useCharacter } from '../hooks';
 import { exportCharacters, importCharacters } from '../utils/storage';
-import { Modal } from '../ui';
+import { Modal } from '../ui/index';
 
 export const CharacterSelector: React.FC = () => {
   const { 
