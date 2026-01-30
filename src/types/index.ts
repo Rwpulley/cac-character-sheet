@@ -65,6 +65,10 @@ export interface Attribute {
   base: number;
   bonus: number;
   tempMod?: number;
+  isPrime?: boolean;
+  rolledScore?: number;
+  raceBonus?: number;
+  saveModifier?: number;
 }
 
 export interface Attack {
@@ -205,15 +209,18 @@ export interface Character {
   magicItems: MagicItem[];
   companions: Companion[];
   notes: string;
-  classAbilities: string;
-  raceAbilities: string;
-  advantages: string;
-  holySymbol: string;
+  classAbilities?: string[];
+  raceAbilities?: string[];
+  advantages?: string[];
+  holySymbol?: string;
   age?: string;
   height?: string;
   weight?: string;
   description?: string;
   backstory?: string;
+  alignment?: string;
+  languages?: string;
+  deity?: string;
   moneyGP: number;
   includeCoinWeight?: boolean;
   encumbranceEnabled?: boolean;
