@@ -57,25 +57,15 @@ export const CharacterSelector: React.FC = () => {
     }
   };
   
-  const theme = {
-    bg: isDarkTheme ? 'bg-gray-900' : 'bg-gray-100',
-    bgCard: isDarkTheme ? 'bg-gray-800' : 'bg-white',
-    bgCard2: isDarkTheme ? 'bg-gray-700' : 'bg-gray-200',
-    text: isDarkTheme ? 'text-white' : 'text-gray-900',
-    textMuted: isDarkTheme ? 'text-gray-400' : 'text-gray-600',
-    hover: isDarkTheme ? 'hover:bg-gray-600' : 'hover:bg-gray-300',
-    border: isDarkTheme ? 'border-gray-700' : 'border-gray-300'
-  };
-  
   return (
-    <div className={`max-w-2xl mx-auto ${theme.bgCard} rounded-lg p-8`}>
+    <div className={`max-w-2xl mx-auto bg-gray-800 rounded-lg p-8`}>
       {/* Title with info button */}
       <div className="flex items-center justify-center gap-3 mb-4">
         <h1 className="text-4xl font-bold text-center">Castles & Crusades</h1>
         {hasSeenAppInfo && (
           <button
             onClick={handleInfoClick}
-            className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
+            className="p-2 bg-gray-700 rounded hover:bg-gray-600"
           >
             <Info size={20} />
           </button>
@@ -107,12 +97,12 @@ export const CharacterSelector: React.FC = () => {
         <button
           onClick={handleExport}
           disabled={characters.length === 0}
-          className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1`}
+          className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
         >
           <Download size={14} />
           Export
         </button>
-        <label className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} flex items-center justify-center gap-1 cursor-pointer`}>
+        <label className="flex-1 py-2 bg-gray-700 rounded text-sm hover:bg-gray-600 flex items-center justify-center gap-1 cursor-pointer">
           <Upload size={14} />
           Import
           <input
@@ -136,7 +126,7 @@ export const CharacterSelector: React.FC = () => {
       <h2 className="text-2xl font-bold mb-4">Your Characters</h2>
       
       {characters.length === 0 ? (
-        <div className={`text-center ${theme.textMuted} py-8`}>
+        <div className="text-center text-gray-400 py-8">
           <p>No characters yet.</p>
           <p className="text-sm mt-2">Create a new character or import a backup file.</p>
         </div>
@@ -146,10 +136,10 @@ export const CharacterSelector: React.FC = () => {
             <div key={char.id} className="flex items-center gap-2">
               <button
                 onClick={() => selectCharacter(char.id)}
-                className={`flex-1 p-4 ${theme.bgCard2} rounded-lg text-left ${theme.hover}`}
+                className="flex-1 p-4 bg-gray-700 rounded-lg text-left hover:bg-gray-600"
               >
                 <div className="text-xl font-bold">{char.name || 'Unnamed'}</div>
-                <div className={theme.textMuted}>
+                <div className="text-gray-400">
                   {char.race} {char.class1} {char.class1Level}
                   {char.class2 && ` / ${char.class2} ${char.class2Level}`}
                 </div>
@@ -166,10 +156,10 @@ export const CharacterSelector: React.FC = () => {
       )}
       
       {/* Footer */}
-      <div className={`text-center text-sm mt-8 pt-4 border-t ${theme.border} ${theme.textMuted}`}>
+      <div className="text-center text-sm mt-8 pt-4 border-t border-gray-700 text-gray-400">
         <button
           onClick={toggleTheme}
-          className={`mb-3 px-4 py-2 rounded-lg ${theme.bgCard2} ${theme.hover} ${theme.text} flex items-center gap-2 mx-auto`}
+          className="mb-3 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 flex items-center gap-2 mx-auto"
         >
           {isDarkTheme ? '☀️ Light Mode' : '🌙 Dark Mode'}
         </button>
@@ -205,29 +195,29 @@ export const CharacterSelector: React.FC = () => {
       {/* App Info Modal */}
       {showAppInfo && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-          <div className={`${theme.bgCard} rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto`}>
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className={`text-xl font-bold ${theme.text}`}>About This App</h2>
+              <h2 className="text-xl font-bold">About This App</h2>
               <button
                 onClick={() => setShowAppInfo(false)}
-                className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
+                className="p-2 bg-gray-700 rounded hover:bg-gray-600"
               >
                 <X size={18} />
               </button>
             </div>
             
-            <div className={`text-sm ${theme.textMuted} space-y-4`}>
+            <div className="text-sm text-gray-300 space-y-4">
               <p>
                 This character tracking app is designed to be used in conjunction with the{' '}
-                <span className={`font-semibold ${theme.text}`}>Castles & Crusades Players Handbook</span>,{' '}
-                <span className={`font-semibold ${theme.text}`}>Adventurers Backpack</span>, and{' '}
-                <span className={`font-semibold ${theme.text}`}>Castle Keepers Guide</span>. 
+                <span className="font-semibold text-white">Castles & Crusades Players Handbook</span>,{' '}
+                <span className="font-semibold text-white">Adventurers Backpack</span>, and{' '}
+                <span className="font-semibold text-white">Castle Keepers Guide</span>. 
                 It is not meant to replace the books, but to replace the printed paper character sheet.
               </p>
               
               <div>
-                <div className={`font-bold ${theme.text} mb-2`}>Features:</div>
-                <ul className={`list-disc list-inside space-y-1 ${theme.textMuted}`}>
+                <div className="font-bold text-white mb-2">Features:</div>
+                <ul className="list-disc list-inside space-y-1 text-gray-300">
                   <li>Roll attributes using your preferred method (3d6, 4d6 drop lowest, or best of 6)</li>
                   <li>Track your attribute modifiers as you increase in level</li>
                   <li>Track your HP with automatic CON modifier calculations</li>
@@ -247,8 +237,8 @@ export const CharacterSelector: React.FC = () => {
                 </ul>
               </div>
               
-              <div className={`${theme.bgCard2} p-3 rounded`}>
-                <p className={theme.textMuted}>
+              <div className="bg-gray-700 p-3 rounded">
+                <p className="text-gray-300">
                   This app does not have everything. If there is anything you think should be included, please reach out:
                 </p>
                 <p className="font-semibold text-blue-400 mt-1">Rwpull@gmail.com</p>
