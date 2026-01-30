@@ -1,25 +1,30 @@
 // ===== CHARACTER SELECTOR COMPONENT =====
 
 import React, { useState } from 'react';
-import { Plus, Trash2, Download, Upload, Edit2 } from 'lucide-react';
+import { Trash2, Download, Upload, Info, X } from 'lucide-react';
 import { useCharacter } from '../hooks';
+import { useTheme } from '../hooks';
 import { exportCharacters, importCharacters } from '../utils/storage';
 import { Modal } from './ui/Modal';
 
 export const CharacterSelector: React.FC = () => {
   const { 
     characters, 
-    selectedCharacterId, 
     selectCharacter, 
     createCharacter, 
-    deleteCharacter,
-    duplicateCharacter 
+    deleteCharacter 
   } = useCharacter();
+  const { isDarkTheme, toggleTheme } = useTheme();
   
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
+  const [showAppInfo, setShowAppInfo] = useState(false);
+  const [hasSeenAppInfo, setHasSeenAppInfo] = useState(() => {
+    return localStorage.getItem('cac-seen-app-info') === 'true';
+  });
   const [importError, setImportError] = useState<string | null>(null);
   
   const handleExport = () => {
+    if (characters.length === 0) return;
     exportCharacters(characters);
   };
   
@@ -30,14 +35,12 @@ export const CharacterSelector: React.FC = () => {
     try {
       setImportError(null);
       const imported = await importCharacters(file);
-      // For now, just log - in full implementation would merge/replace
       console.log('Imported characters:', imported);
-      window.location.reload(); // Reload to pick up changes
+      window.location.reload();
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Import failed');
     }
     
-    // Reset input
     e.target.value = '';
   };
   
@@ -46,90 +49,133 @@ export const CharacterSelector: React.FC = () => {
     setShowDeleteConfirm(null);
   };
   
+  const handleInfoClick = () => {
+    setShowAppInfo(true);
+    if (!hasSeenAppInfo) {
+      setHasSeenAppInfo(true);
+      localStorage.setItem('cac-seen-app-info', 'true');
+    }
+  };
+  
+  const theme = {
+    bg: isDarkTheme ? 'bg-gray-900' : 'bg-gray-100',
+    bgCard: isDarkTheme ? 'bg-gray-800' : 'bg-white',
+    bgCard2: isDarkTheme ? 'bg-gray-700' : 'bg-gray-200',
+    text: isDarkTheme ? 'text-white' : 'text-gray-900',
+    textMuted: isDarkTheme ? 'text-gray-400' : 'text-gray-600',
+    hover: isDarkTheme ? 'hover:bg-gray-600' : 'hover:bg-gray-300',
+    border: isDarkTheme ? 'border-gray-700' : 'border-gray-300'
+  };
+  
   return (
-    <div className="bg-gray-800 p-4 rounded-lg mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-bold">Characters</h2>
-        <div className="flex gap-2">
+    <div className={`max-w-2xl mx-auto ${theme.bgCard} rounded-lg p-8`}>
+      {/* Title with info button */}
+      <div className="flex items-center justify-center gap-3 mb-4">
+        <h1 className="text-4xl font-bold text-center">Castles & Crusades</h1>
+        {hasSeenAppInfo && (
           <button
-            onClick={handleExport}
-            className="p-2 bg-gray-700 rounded hover:bg-gray-600"
-            title="Export Characters"
+            onClick={handleInfoClick}
+            className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
           >
-            <Download size={18} />
+            <Info size={20} />
           </button>
-          <label className="p-2 bg-gray-700 rounded hover:bg-gray-600 cursor-pointer" title="Import Characters">
-            <Upload size={18} />
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImport}
-              className="hidden"
-            />
-          </label>
-          <button
-            onClick={createCharacter}
-            className="p-2 bg-green-600 rounded hover:bg-green-700"
-            title="New Character"
-          >
-            <Plus size={18} />
-          </button>
-        </div>
+        )}
       </div>
       
-      {importError && (
-        <div className="text-red-400 text-sm mb-2">{importError}</div>
+      {/* Info Button - Prominent for first-time users */}
+      {!hasSeenAppInfo && (
+        <div className="flex justify-center mb-6">
+          <button
+            onClick={handleInfoClick}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 text-white font-semibold"
+          >
+            <Info size={18} />
+            <span>Click Here Before Creating a Character</span>
+          </button>
+        </div>
       )}
       
+      {/* Import Error */}
+      {importError && (
+        <div className="text-center mb-4">
+          <span className="text-red-400 text-sm">{importError}</span>
+        </div>
+      )}
+      
+      {/* Export/Import Buttons */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={handleExport}
+          disabled={characters.length === 0}
+          className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1`}
+        >
+          <Download size={14} />
+          Export
+        </button>
+        <label className={`flex-1 py-2 ${theme.bgCard2} rounded text-sm ${theme.hover} flex items-center justify-center gap-1 cursor-pointer`}>
+          <Upload size={14} />
+          Import
+          <input
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            className="hidden"
+          />
+        </label>
+      </div>
+      
+      {/* Create New Character Button */}
+      <button
+        onClick={createCharacter}
+        className="w-full py-4 bg-green-600 rounded-lg text-xl font-bold mb-6 hover:bg-green-700 text-white"
+      >
+        + Create New Character
+      </button>
+      
+      {/* Characters List */}
+      <h2 className="text-2xl font-bold mb-4">Your Characters</h2>
+      
       {characters.length === 0 ? (
-        <div className="text-gray-400 text-center py-4">
-          No characters yet. Click + to create one!
+        <div className={`text-center ${theme.textMuted} py-8`}>
+          <p>No characters yet.</p>
+          <p className="text-sm mt-2">Create a new character or import a backup file.</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {characters.map(char => (
-            <div
-              key={char.id}
-              className={`flex items-center justify-between p-3 rounded cursor-pointer ${
-                selectedCharacterId === char.id 
-                  ? 'bg-blue-600' 
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              onClick={() => selectCharacter(char.id)}
-            >
-              <div>
-                <div className="font-bold">{char.name || 'Unnamed'}</div>
-                <div className="text-sm text-gray-300">
+            <div key={char.id} className="flex items-center gap-2">
+              <button
+                onClick={() => selectCharacter(char.id)}
+                className={`flex-1 p-4 ${theme.bgCard2} rounded-lg text-left ${theme.hover}`}
+              >
+                <div className="text-xl font-bold">{char.name || 'Unnamed'}</div>
+                <div className={theme.textMuted}>
                   {char.race} {char.class1} {char.class1Level}
                   {char.class2 && ` / ${char.class2} ${char.class2Level}`}
                 </div>
-              </div>
-              <div className="flex gap-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    duplicateCharacter(char.id);
-                  }}
-                  className="p-2 bg-gray-600 rounded hover:bg-gray-500"
-                  title="Duplicate"
-                >
-                  <Edit2 size={14} />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowDeleteConfirm(char.id);
-                  }}
-                  className="p-2 bg-red-600 rounded hover:bg-red-700"
-                  title="Delete"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(char.id)}
+                className="p-4 bg-red-600 rounded-lg hover:bg-red-700 text-white"
+              >
+                <Trash2 size={20} />
+              </button>
             </div>
           ))}
         </div>
       )}
+      
+      {/* Footer */}
+      <div className={`text-center text-sm mt-8 pt-4 border-t ${theme.border} ${theme.textMuted}`}>
+        <button
+          onClick={toggleTheme}
+          className={`mb-3 px-4 py-2 rounded-lg ${theme.bgCard2} ${theme.hover} ${theme.text} flex items-center gap-2 mx-auto`}
+        >
+          {isDarkTheme ? '☀️ Light Mode' : '🌙 Dark Mode'}
+        </button>
+        <div>C&C Character Sheet v1.0</div>
+        <div>Created by Rwpull</div>
+      </div>
       
       {/* Delete Confirmation Modal */}
       <Modal
@@ -155,6 +201,69 @@ export const CharacterSelector: React.FC = () => {
           </button>
         </div>
       </Modal>
+      
+      {/* App Info Modal */}
+      {showAppInfo && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className={`${theme.bgCard} rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto`}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-xl font-bold ${theme.text}`}>About This App</h2>
+              <button
+                onClick={() => setShowAppInfo(false)}
+                className={`p-2 ${theme.bgCard2} rounded ${theme.hover}`}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className={`text-sm ${theme.textMuted} space-y-4`}>
+              <p>
+                This character tracking app is designed to be used in conjunction with the{' '}
+                <span className={`font-semibold ${theme.text}`}>Castles & Crusades Players Handbook</span>,{' '}
+                <span className={`font-semibold ${theme.text}`}>Adventurers Backpack</span>, and{' '}
+                <span className={`font-semibold ${theme.text}`}>Castle Keepers Guide</span>. 
+                It is not meant to replace the books, but to replace the printed paper character sheet.
+              </p>
+              
+              <div>
+                <div className={`font-bold ${theme.text} mb-2`}>Features:</div>
+                <ul className={`list-disc list-inside space-y-1 ${theme.textMuted}`}>
+                  <li>Roll attributes using your preferred method (3d6, 4d6 drop lowest, or best of 6)</li>
+                  <li>Track your attribute modifiers as you increase in level</li>
+                  <li>Track your HP with automatic CON modifier calculations</li>
+                  <li>Track your experience and see when you reach your next level</li>
+                  <li>Track AC based on Race abilities, Armor, and Shield modifiers</li>
+                  <li>Track your inventory including weight and encumbrance</li>
+                  <li>Add inventory items that give Attribute, Speed, HP, and AC bonuses</li>
+                  <li>Perform money exchange using Gold as your base currency</li>
+                  <li>Track ammo usage when used with a ranged weapon</li>
+                  <li>Show attack rolls with all bonuses applied</li>
+                  <li>Track what spells you know and have prepared</li>
+                  <li>Track your magical inventory and daily spell uses</li>
+                  <li>Track Checks and Saves with appropriate modifiers</li>
+                  <li>Track companions including their details, attacks, and HP</li>
+                  <li>Use a multitude of dice to roll for whatever you may need</li>
+                  <li>Notes section with date and time to track your group's progress</li>
+                </ul>
+              </div>
+              
+              <div className={`${theme.bgCard2} p-3 rounded`}>
+                <p className={theme.textMuted}>
+                  This app does not have everything. If there is anything you think should be included, please reach out:
+                </p>
+                <p className="font-semibold text-blue-400 mt-1">Rwpull@gmail.com</p>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => setShowAppInfo(false)}
+              className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-4 font-semibold text-white"
+            >
+              Got It
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
