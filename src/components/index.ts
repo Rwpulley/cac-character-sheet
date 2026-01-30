@@ -11,3 +11,6 @@ export { Header } from './Header';
 // Display Components
 export { AttributeDisplay } from './AttributeDisplay';
 export { CoreStats, XPProgressBar } from './CoreStats';
+
+// Tab Components
+export { MainTab } from './MainTab';
