@@ -6,7 +6,7 @@ import { useCharacter } from '../hooks';
 import { useCalculations } from '../hooks';
 import { calcMod, formatModifier } from '../utils';
 import { ATTRIBUTES, ATTRIBUTE_NAMES } from '../utils/constants';
-import { Modal } from '../ui';
+import { Modal } from './ui/Modal';
 
 export const AttributeDisplay: React.FC = () => {
   const { char, updateChar } = useCharacter();
