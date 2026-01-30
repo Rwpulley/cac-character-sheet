@@ -2,10 +2,10 @@
 
 import React, { useState } from 'react';
 import { Edit2 } from 'lucide-react';
-import { useCharacter } from '../../hooks';
-import { useCalculations } from '../../hooks';
-import { calcMod, formatModifier } from '../../utils';
-import { ATTRIBUTES, ATTRIBUTE_NAMES } from '../../utils/constants';
+import { useCharacter } from '../hooks';
+import { useCalculations } from '../hooks';
+import { calcMod, formatModifier } from '../utils';
+import { ATTRIBUTES, ATTRIBUTE_NAMES } from '../utils/constants';
 import { Modal } from '../ui';
 
 export const AttributeDisplay: React.FC = () => {
