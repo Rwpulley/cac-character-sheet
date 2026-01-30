@@ -163,9 +163,12 @@ export const DEFAULT_CHARACTER: Omit<Character, 'id'> = {
  */
 export const TABS = [
   { id: 'main', label: 'Main' },
-  { id: 'combat', label: 'Combat' },
-  { id: 'spells', label: 'Spells' },
+  { id: 'attack', label: 'Attack' },
   { id: 'inventory', label: 'Inventory' },
+  { id: 'magic', label: 'Magic' },
+  { id: 'saves', label: 'Checks/Saves' },
+  { id: 'dice', label: 'Dice' },
+  { id: 'companion', label: 'Companion' },
   { id: 'notes', label: 'Notes' }
 ] as const;
 
