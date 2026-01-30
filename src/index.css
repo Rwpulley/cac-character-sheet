@@ -25,3 +25,70 @@ button, input, select, textarea {
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* ===== LIGHT THEME OVERRIDES ===== */
+.light-theme {
+  --bg-primary: #f3f4f6;
+  --bg-card: #ffffff;
+  --bg-card-2: #e5e7eb;
+  --bg-card-3: #d1d5db;
+  --bg-input: #ffffff;
+  --text-primary: #111827;
+  --text-muted: #6b7280;
+  --border-color: #d1d5db;
+}
+
+.light-theme .bg-gray-900 { background-color: var(--bg-primary) !important; }
+.light-theme .bg-gray-800 { background-color: var(--bg-card) !important; border: 1px solid var(--border-color); }
+.light-theme .bg-gray-700 { background-color: var(--bg-card-2) !important; }
+.light-theme .bg-gray-600 { background-color: var(--bg-card-3) !important; }
+.light-theme .text-white { color: var(--text-primary) !important; }
+.light-theme .text-gray-400 { color: var(--text-muted) !important; }
+.light-theme .text-gray-300 { color: #374151 !important; }
+.light-theme .text-gray-200 { color: #1f2937 !important; }
+.light-theme .border-gray-600 { border-color: var(--border-color) !important; }
+.light-theme .border-gray-700 { border-color: #e5e7eb !important; }
+
+.light-theme input, .light-theme textarea, .light-theme select {
+  background-color: var(--bg-input) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.light-theme .hover\:bg-gray-600:hover { background-color: #d1d5db !important; }
+.light-theme .hover\:bg-gray-500:hover { background-color: #9ca3af !important; }
+
+/* Lighten colored buttons for better black text contrast */
+.light-theme .bg-blue-600 { background-color: #93c5fd !important; }
+.light-theme .bg-blue-700 { background-color: #60a5fa !important; }
+.light-theme .hover\:bg-blue-700:hover { background-color: #60a5fa !important; }
+.light-theme .hover\:bg-blue-500:hover { background-color: #93c5fd !important; }
+
+.light-theme .bg-purple-600 { background-color: #c4b5fd !important; }
+.light-theme .bg-purple-700 { background-color: #a78bfa !important; }
+.light-theme .hover\:bg-purple-700:hover { background-color: #a78bfa !important; }
+
+.light-theme .bg-green-600 { background-color: #86efac !important; }
+.light-theme .bg-green-700 { background-color: #4ade80 !important; }
+.light-theme .hover\:bg-green-700:hover { background-color: #4ade80 !important; }
+
+.light-theme .bg-red-600 { background-color: #fca5a5 !important; }
+.light-theme .bg-red-700 { background-color: #f87171 !important; }
+.light-theme .hover\:bg-red-700:hover { background-color: #f87171 !important; }
+
+.light-theme .bg-yellow-600 { background-color: #fde047 !important; }
+.light-theme .bg-yellow-700 { background-color: #facc15 !important; }
+.light-theme .hover\:bg-yellow-700:hover { background-color: #facc15 !important; }
+
+.light-theme .bg-orange-600 { background-color: #fdba74 !important; }
+.light-theme .bg-orange-700 { background-color: #fb923c !important; }
+.light-theme .hover\:bg-orange-700:hover { background-color: #fb923c !important; }
+
+/* Critical hit text - use darker gold/orange in light mode */
+.light-theme .text-yellow-400 { color: #b45309 !important; }
+.light-theme .text-yellow-500 { color: #a16207 !important; }
+.light-theme .text-yellow-200 { color: #92400e !important; }
+
+/* Yellow backgrounds for critical sections */
+.light-theme .bg-yellow-900 { background-color: #fef3c7 !important; border-color: #f59e0b !important; }
+.light-theme .border-yellow-600 { border-color: #d97706 !important; }
