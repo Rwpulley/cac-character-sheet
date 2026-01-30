@@ -1,7 +1,7 @@
 // ===== TAB BAR COMPONENT =====
 
 import React from 'react';
-import { TABS, TabId } from '../../utils/constants';
+import { TABS, TabId } from '../utils/constants';
 
 interface TabBarProps {
   activeTab: TabId;
