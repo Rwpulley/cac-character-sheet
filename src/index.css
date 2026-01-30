@@ -38,23 +38,66 @@ button, input, select, textarea {
   --border-color: #d1d5db;
 }
 
+/* Background overrides */
 .light-theme .bg-gray-900 { background-color: var(--bg-primary) !important; }
 .light-theme .bg-gray-800 { background-color: var(--bg-card) !important; border: 1px solid var(--border-color); }
 .light-theme .bg-gray-700 { background-color: var(--bg-card-2) !important; }
 .light-theme .bg-gray-600 { background-color: var(--bg-card-3) !important; }
-.light-theme .text-white { color: var(--text-primary) !important; }
-.light-theme .text-gray-400 { color: var(--text-muted) !important; }
+
+/* Text color overrides - be very specific */
+.light-theme .text-white,
+.light-theme.text-white,
+.light-theme h1,
+.light-theme h2,
+.light-theme h3,
+.light-theme h4,
+.light-theme p,
+.light-theme span,
+.light-theme div,
+.light-theme label,
+.light-theme button {
+  color: var(--text-primary) !important;
+}
+
+/* Muted text */
+.light-theme .text-gray-400,
+.light-theme .text-gray-500 { 
+  color: var(--text-muted) !important; 
+}
 .light-theme .text-gray-300 { color: #374151 !important; }
 .light-theme .text-gray-200 { color: #1f2937 !important; }
+
+/* Keep colored text colored */
+.light-theme .text-red-400,
+.light-theme .text-red-500,
+.light-theme .text-red-600 { color: #dc2626 !important; }
+.light-theme .text-green-400,
+.light-theme .text-green-500,
+.light-theme .text-green-600 { color: #16a34a !important; }
+.light-theme .text-blue-400,
+.light-theme .text-blue-500,
+.light-theme .text-blue-600 { color: #2563eb !important; }
+
+/* Border overrides */
 .light-theme .border-gray-600 { border-color: var(--border-color) !important; }
 .light-theme .border-gray-700 { border-color: #e5e7eb !important; }
 
-.light-theme input, .light-theme textarea, .light-theme select {
+/* Input overrides */
+.light-theme input, 
+.light-theme textarea, 
+.light-theme select {
   background-color: var(--bg-input) !important;
   color: var(--text-primary) !important;
   border: 1px solid var(--border-color) !important;
 }
 
+/* Placeholder text */
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: #9ca3af !important;
+}
+
+/* Hover overrides */
 .light-theme .hover\:bg-gray-600:hover { background-color: #d1d5db !important; }
 .light-theme .hover\:bg-gray-500:hover { background-color: #9ca3af !important; }
 
@@ -92,3 +135,6 @@ button, input, select, textarea {
 /* Yellow backgrounds for critical sections */
 .light-theme .bg-yellow-900 { background-color: #fef3c7 !important; border-color: #f59e0b !important; }
 .light-theme .border-yellow-600 { border-color: #d97706 !important; }
+
+/* Ensure modals also get light theme */
+.light-theme .bg-black { background-color: rgba(0, 0, 0, 0.5) !important; }
