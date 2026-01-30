@@ -20,14 +20,16 @@ const AppContent: React.FC = () => {
   const { toasts, dismissToast } = useToast();
   const [activeTab, setActiveTab] = useState<TabId>('main');
   
+  const theme = {
+    bg: isDarkTheme ? 'bg-gray-900' : 'bg-gray-100',
+    text: isDarkTheme ? 'text-white' : 'text-gray-900',
+  };
+  
   // If no character selected, show character select screen
   if (!char) {
     return (
-      <div className={`min-h-screen ${isDarkTheme ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'} p-4`}>
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold text-center mb-6">C&C Character Sheet</h1>
-          <CharacterSelector />
-        </div>
+      <div className={`min-h-screen ${theme.bg} ${theme.text} p-4`}>
+        <CharacterSelector />
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
     );
@@ -35,7 +37,7 @@ const AppContent: React.FC = () => {
   
   // Character is selected - show character sheet
   return (
-    <div className={`min-h-screen ${isDarkTheme ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'} p-4`}>
+    <div className={`min-h-screen ${theme.bg} ${theme.text} p-4`}>
       <div className="max-w-4xl mx-auto">
         {/* Tabs at top */}
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
