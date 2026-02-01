@@ -69,11 +69,13 @@ interface InventoryItem {
   isGrimoire: boolean;
   isAmmo: boolean;
   isPotion: boolean;
+  isGem: boolean;
   hasAttrBonus: boolean;
   attrBonuses: { attr: string; value: number }[];
   effects?: ItemEffect[];
   weaponDamage?: string;
   weaponType?: string;
+  weaponExtraDice?: { numDice: number; dieType: number; label?: string }[];  // Extra damage dice (e.g., on failed save)
   acBonus?: number;
   magicACBonus?: number;  // Magic bonus to AC for armor/shields
   magicCastingDescription?: string;
@@ -88,7 +90,14 @@ interface InventoryItem {
   isMagicalContainer?: boolean;
   containerMaxWeight?: number;  // Max weight it can hold (for magical containers)
   storedInId?: number;  // ID of container this item is stored in
-  storedCoinsGP?: number;  // GP value of coins stored in this container (for magical containers)
+  storedCoinsGP?: number;  // DEPRECATED - GP value of coins stored (kept for migration)
+  storedCoins?: {  // Individual coin counts stored in this container
+    platinum: number;
+    gold: number;
+    electrum: number;
+    silver: number;
+    copper: number;
+  };
 }
 
 interface ItemEffect {
@@ -216,6 +225,7 @@ interface Character {
     silver: number;
     copper: number;
   };
+  counters?: { id: number; description: string; maxUses: number; currentUses: number }[];
 }
 
 interface StorageData {
@@ -1143,6 +1153,25 @@ function CaCCharacterSheetInner() {
   const [editModal, setEditModal] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Move to container modal state
+  const [moveToContainerModal, setMoveToContainerModal] = useState<{
+    sourceItemId: number;
+    containerId: number;
+    maxQty: number;
+    qty: string;
+    itemName: string;
+  } | null>(null);
+  
+  // Counter modal state
+  const [counterModal, setCounterModal] = useState<{
+    type: 'add' | 'edit';
+    counter?: { id: number; description: string; maxUses: number; currentUses: number };
+    description: string;
+    uses: string;
+  } | null>(null);
+  const [countersExpanded, setCountersExpanded] = useState(true);
+  const [diceRollerExpanded, setDiceRollerExpanded] = useState(true);
+  
   // Attribute roller state
   const [attributeRollerOpen, setAttributeRollerOpen] = useState(false);
   const [attributeRolls, setAttributeRolls] = useState([]); // Array of 6 rolls
@@ -1268,6 +1297,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     isWeapon: false,
     isAmmo: false,
     isPotion: false,
+    isGem: false,
     // Magic casting
     magicCastingDescription: '',
     magicCastingCapacity: 0,
@@ -1289,6 +1319,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     weaponDamageMisc: '',
     weaponDamageNumDice: '',
     weaponDamageDieType: 8,
+    weaponExtraDice: [] as { numDice: number; dieType: number; label: string }[],
     // Container properties
     isContainer: false,
     containerCapacity: '',
@@ -1418,6 +1449,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemIsWeapon = itemModal.isWeapon;
   const itemIsAmmo = itemModal.isAmmo;
   const itemIsPotion = itemModal.isPotion;
+  const itemIsGem = itemModal.isGem;
   const itemWeaponType = itemModal.weaponType;
   const itemWeaponMelee = itemModal.weaponMelee;
   const itemWeaponRanged = itemModal.weaponRanged;
@@ -1427,6 +1459,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemWeaponDamageMisc = itemModal.weaponDamageMisc;
   const itemWeaponDamageNumDice = itemModal.weaponDamageNumDice;
   const itemWeaponDamageDieType = itemModal.weaponDamageDieType;
+  const itemWeaponExtraDice = itemModal.weaponExtraDice;
 
   // Legacy item modal setters
   const setItemIsArmor = useCallback((v) => updateItemModal({ isArmor: v }), [updateItemModal]);
@@ -1446,6 +1479,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemIsWeapon = useCallback((v) => updateItemModal({ isWeapon: v }), [updateItemModal]);
   const setItemIsAmmo = useCallback((v) => updateItemModal({ isAmmo: v }), [updateItemModal]);
   const setItemIsPotion = useCallback((v) => updateItemModal({ isPotion: v }), [updateItemModal]);
+  const setItemIsGem = useCallback((v) => updateItemModal({ isGem: v }), [updateItemModal]);
   const setItemWeaponType = useCallback((v) => updateItemModal({ weaponType: v }), [updateItemModal]);
   const setItemWeaponMelee = useCallback((v) => updateItemModal({ weaponMelee: v }), [updateItemModal]);
   const setItemWeaponRanged = useCallback((v) => updateItemModal({ weaponRanged: v }), [updateItemModal]);
@@ -1456,6 +1490,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemWeaponDamageMisc = useCallback((v) => updateItemModal({ weaponDamageMisc: v }), [updateItemModal]);
   const setItemWeaponDamageNumDice = useCallback((v) => updateItemModal({ weaponDamageNumDice: v }), [updateItemModal]);
   const setItemWeaponDamageDieType = useCallback((v) => updateItemModal({ weaponDamageDieType: v }), [updateItemModal]);
+  const setItemWeaponExtraDice = useCallback((v) => updateItemModal({ weaponExtraDice: typeof v === 'function' ? v(itemModal.weaponExtraDice) : v }), [updateItemModal, itemModal.weaponExtraDice]);
 
   // Container getters
   const itemIsContainer = itemModal.isContainer;
@@ -1543,7 +1578,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   // Wallet modal form
   const [walletForm, setWalletForm] = useState({
     cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
-    selectedCoinContainer: null as number | null
+    selectedCoinContainer: null as number | null,
+    // Checkboxes for which coins to move to/from container
+    moveCoins: { copper: true, silver: true, gold: true, electrum: true, platinum: true } as Record<string, boolean>
   });
   
   const updateWalletForm = useCallback((updates) => {
@@ -1551,7 +1588,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   }, []);
   
   const resetWalletForm = useCallback(() => {
-    // Don't reset selectedCoinContainer - only reset coin amounts
+    // Don't reset selectedCoinContainer or moveCoins - only reset coin amounts
     setWalletForm(prev => ({ ...prev, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }));
   }, []);
 
@@ -1731,7 +1768,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [itemForm, setItemForm] = useState({
     name: '',
     description: '',
-    quantity: 1,
+    quantity: '',  // Store as string so it can be empty (defaults to 1 when saving)
     weightPer: '',  // Store as string for decimal/negative input
     ev: '',         // Store as string for decimal/negative input
     worth: 0,
@@ -1746,7 +1783,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   
   const resetItemForm = useCallback(() => {
     setItemForm({
-      name: '', description: '', quantity: 1, weightPer: '', ev: '',
+      name: '', description: '', quantity: '', weightPer: '', ev: '',
       worth: 0, worthUnit: 'gp', acBonus: 0, magicACBonus: 0
     });
   }, []);
@@ -2035,6 +2072,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     
     let inventoryEV = 0;
     let inventoryWeight = 0;
+    let zeroEVItemCount = 0;  // Track zero-EV items for 10:1 EV calculation
+    
     (char.inventory || []).forEach(it => {
       const qty = Number(it.quantity) || 1;
       const ev = Number(it.ev) || 0;
@@ -2047,7 +2086,13 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       
       // EV: Don't count if stored in ANY container
       if (!isStoredInContainer) {
-        inventoryEV += ev * qty;
+        if (ev > 0) {
+          // Normal items: EV per item × quantity
+          inventoryEV += ev * qty;
+        } else {
+          // Zero-EV items: accumulate count, will calculate at end
+          zeroEVItemCount += qty;
+        }
       }
       
       // Weight: Don't count if stored in MAGICAL container, otherwise count
@@ -2055,6 +2100,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
         inventoryWeight += weight * qty;
       }
     });
+    
+    // Zero-EV items: 10 items = 1 EV
+    inventoryEV += Math.floor(zeroEVItemCount / 10);
     
     // Calculate coin weight and EV by denomination
     // Weight: 16 coins = 1 lb for all coins
@@ -2067,18 +2115,23 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
     const totalCoinCount = (wallet.platinum || 0) + (wallet.gold || 0) + (wallet.electrum || 0) + (wallet.silver || 0) + (wallet.copper || 0);
     
-    // Calculate coins stored in magical containers (stored as GP value, convert back to approximate coins)
-    const coinsGPInMagicalContainers = (char.inventory || [])
+    // Calculate coins stored in magical containers (now stored as individual coin counts)
+    const coinsInMagicalContainersCount = (char.inventory || [])
       .filter(it => it.isContainer && it.isMagicalContainer)
-      .reduce((sum, container) => sum + (Number(container.storedCoinsGP) || 0), 0);
+      .reduce((sum, container) => {
+        if (container.storedCoins) {
+          return sum + (container.storedCoins.platinum || 0) + (container.storedCoins.gold || 0) + 
+                 (container.storedCoins.electrum || 0) + (container.storedCoins.silver || 0) + 
+                 (container.storedCoins.copper || 0);
+        }
+        // Legacy migration: treat storedCoinsGP as gold coin count
+        return sum + Math.floor(Number(container.storedCoinsGP) || 0);
+      }, 0);
     
-    // For magical container coins, assume they're stored as mixed denominations (use GP as proxy for coin count)
-    const coinsInContainersCount = Math.ceil(coinsGPInMagicalContainers);
-    
-    // Only count coins NOT in magical containers
-    const coinsNotInContainersCount = Math.max(0, totalCoinCount - coinsInContainersCount);
-    const coinWeight = coinsNotInContainersCount / 16; // 16 coins = 1 lb
-    const coinEV = coinsNotInContainersCount / 160; // 160 coins = 1 EV
+    // Wallet coins are always in your pocket, not in containers - they always count
+    // Coins in magical containers don't count toward weight
+    const coinWeight = totalCoinCount / 16; // 16 coins = 1 lb
+    const coinEV = totalCoinCount / 160; // 160 coins = 1 EV
     
     // Include coin weight/EV only if setting is enabled
     const includeCoinWeight = char.includeCoinWeight ?? false;
@@ -2262,11 +2315,13 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const isWeaponEffect = (item: InventoryItem) => (item.effects?.length || 0) > 0;
     const isStatBoosting = (item: InventoryItem) => item.hasAttrBonus && (item.attrBonuses?.length || 0) > 0;
     const isMagicPotion = (item: InventoryItem) => item.isMagicCasting || item.isGrimoire || item.isPotion;
+    const isContainer = (item: InventoryItem) => !!item.isContainer;
     
     // Categorize items - items can appear in multiple categories
     const categories = {
       armorShield: { name: 'Armor & Shields', items: [] as InventoryItem[], icon: '🛡️' },
       weaponsAmmo: { name: 'Weapons & Ammo', items: [] as InventoryItem[], icon: '⚔️' },
+      containers: { name: 'Backpacks & Pouches', items: [] as InventoryItem[], icon: '🎒' },
       weaponEffects: { name: 'Weapon Effects', items: [] as InventoryItem[], icon: '✨' },
       statBoosting: { name: 'Stat Boosting', items: [] as InventoryItem[], icon: '📈' },
       magicPotions: { name: 'Magical Items & Potions', items: [] as InventoryItem[], icon: '🧪' },
@@ -2286,6 +2341,10 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       if (isWeaponAmmo(item)) {
         categories.weaponsAmmo.items.push(item);
         cats.push('Weapons & Ammo');
+      }
+      if (isContainer(item)) {
+        categories.containers.items.push(item);
+        cats.push('Backpacks & Pouches');
       }
       if (isWeaponEffect(item)) {
         categories.weaponEffects.items.push(item);
@@ -2313,29 +2372,61 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Helper to get container info (contents, capacity used, etc.)
   const getContainerInfo = useCallback((containerId: number) => {
-    if (!char) return { items: [], itemCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false };
+    if (!char) return { items: [], itemCount: 0, slotCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false };
     
     const container = (char.inventory || []).find(it => it.id === containerId);
-    if (!container || !container.isContainer) return { items: [], itemCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false, storedCoinsGP: 0, storedCoinsWeight: 0 };
+    if (!container || !container.isContainer) return { items: [], itemCount: 0, slotCount: 0, totalWeight: 0, capacity: 0, maxWeight: 0, isMagical: false, storedCoinsGP: 0, storedCoinsWeight: 0, storedCoinCount: 0, storedCoins: { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 } };
     
     const containedItems = (char.inventory || []).filter(it => it.storedInId === containerId);
+    
+    // Calculate item count (raw quantity total)
     const itemCount = containedItems.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+    
+    // Calculate slot count: normal items use qty slots, zero-EV items use ceil(qty/10) slots
+    let zeroEVCount = 0;
+    let normalSlots = 0;
+    containedItems.forEach(it => {
+      const qty = Number(it.quantity) || 1;
+      const ev = Number(it.ev) || 0;
+      if (ev > 0) {
+        // Normal items: each item takes 1 slot
+        normalSlots += qty;
+      } else {
+        // Zero-EV items: accumulate, will calculate slots at end
+        zeroEVCount += qty;
+      }
+    });
+    // Zero-EV items: 10 = 1 slot (ceiling so 1-10 = 1, 11-20 = 2, etc.)
+    const zeroEVSlots = Math.ceil(zeroEVCount / 10);
+    const slotCount = normalSlots + zeroEVSlots;
+    
     const itemsWeight = containedItems.reduce((sum, it) => sum + ((Number(it.weightPer) || 0) * (Number(it.quantity) || 1)), 0);
     
-    // Calculate stored coins weight (16 coins = 1 lb, treating GP as coin count)
-    const storedCoinsGP = Number(container.storedCoinsGP) || 0;
-    const storedCoinsWeight = storedCoinsGP / 16;
+    // Get stored coins - migrate from legacy storedCoinsGP if needed
+    let storedCoins = container.storedCoins || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+    if (!container.storedCoins && container.storedCoinsGP) {
+      // Legacy migration: convert GP value to gold coins
+      storedCoins = { platinum: 0, gold: Math.floor(container.storedCoinsGP), electrum: 0, silver: 0, copper: 0 };
+    }
+    
+    // Calculate stored coins GP value and weight
+    const storedCoinsGP = (storedCoins.platinum * 10) + (storedCoins.electrum * 5) + storedCoins.gold + (storedCoins.silver * 0.1) + (storedCoins.copper * 0.01);
+    const storedCoinCount = storedCoins.platinum + storedCoins.gold + storedCoins.electrum + storedCoins.silver + storedCoins.copper;
+    const storedCoinsWeight = storedCoinCount / 16;
     const totalWeight = itemsWeight + storedCoinsWeight;
     
     return {
       items: containedItems,
       itemCount,
+      slotCount,  // New: slots used (zero-EV items: 10 = 1 slot)
       totalWeight,
       capacity: Number(container.containerCapacity) || 0,
       maxWeight: Number(container.containerMaxWeight) || 0,
       isMagical: !!container.isMagicalContainer,
       storedCoinsGP,
-      storedCoinsWeight
+      storedCoinsWeight,
+      storedCoinCount,
+      storedCoins
     };
   }, [char]);
 
@@ -2344,7 +2435,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     if (!char || !item) return [];
     
     const itemEV = Number(item.ev) || 0;
-    const itemWeight = (Number(item.weightPer) || 0) * (Number(item.quantity) || 1);
+    const singleItemWeight = Number(item.weightPer) || 0;
     
     return (char.inventory || [])
       .filter(container => {
@@ -2354,20 +2445,33 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
         const info = getContainerInfo(container.id);
         
         if (container.isMagicalContainer) {
-          // Magical container: check weight limit
+          // Magical container: check if at least one item fits by weight
           const maxWeight = Number(container.containerMaxWeight) || 0;
           const remainingWeight = maxWeight - info.totalWeight;
-          return itemWeight <= remainingWeight;
+          return singleItemWeight <= remainingWeight;
         } else {
           // Normal container: check capacity and EV rule
           const capacity = Number(container.containerCapacity) || 0;
-          const itemQty = Number(item.quantity) || 1;
           
-          // Item EV must be less than capacity
-          if (itemEV >= capacity) return false;
+          // Item EV must be less than capacity (unless it's zero-EV)
+          if (itemEV > 0 && itemEV >= capacity) return false;
           
-          // Must have room for the items
-          if (info.itemCount + itemQty > capacity) return false;
+          // Must have room for at least 1 slot
+          // Zero-EV items only take a slot if we'd hit the next 10 threshold
+          if (itemEV > 0) {
+            // Normal item needs 1 slot
+            if (info.slotCount >= capacity) return false;
+          } else {
+            // Zero-EV item: check if adding more would create a new slot
+            // Count current zero-EV items in this container
+            const zeroEVInContainer = info.items
+              .filter(it => (Number(it.ev) || 0) === 0)
+              .reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+            const currentZeroEVSlots = Math.ceil(zeroEVInContainer / 10);
+            const newZeroEVSlots = Math.ceil((zeroEVInContainer + 1) / 10);
+            const additionalSlots = newZeroEVSlots - currentZeroEVSlots;
+            if (info.slotCount + additionalSlots > capacity) return false;
+          }
           
           return true;
         }
@@ -2751,10 +2855,11 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     if (editModal.type === 'editItem') {
       // Initialize itemForm with item values
+      const qty = Number(editModal.item?.quantity) || 1;
       setItemForm({
         name: editModal.item?.name || '',
         description: editModal.item?.description || '',
-        quantity: Number(editModal.item?.quantity) || 1,
+        quantity: String(qty),  // Store as string for editing
         weightPer: editModal.item?.weightPer != null ? String(editModal.item.weightPer) : '',
         ev: editModal.item?.ev != null ? String(editModal.item.ev) : '',
         worth: editModal.item?.worthAmount ?? (editModal.item?.worthGP != null ? editModal.item.worthGP : 0),
@@ -2788,6 +2893,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemIsWeapon(!!editModal.item?.isWeapon);
       setItemIsAmmo(!!editModal.item?.isAmmo);
       setItemIsPotion(!!editModal.item?.isPotion);
+      setItemIsGem(!!editModal.item?.isGem);
       
       // Load container fields
       setItemIsContainer(!!editModal.item?.isContainer);
@@ -2813,6 +2919,10 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemWeaponDamageMisc(dmgMisc === 0 ? '' : String(dmgMisc));
       setItemWeaponDamageNumDice(numDice === 1 ? '' : String(numDice));
       setItemWeaponDamageDieType(Number(editModal.item?.weaponDamageDieType) || 8);
+      
+      // Load extra damage dice
+      const loadedExtraDice = Array.isArray(editModal.item?.weaponExtraDice) ? editModal.item.weaponExtraDice : [];
+      setItemWeaponExtraDice(loadedExtraDice);
 
       // Load item effects (new format)
       const loadedEffects = Array.isArray(editModal.item?.effects) ? editModal.item.effects : [];
@@ -3371,6 +3481,70 @@ if (editModal.type === 'acTracking' && char) {
       return newChars;
     });
   }, [currentCharIndex]);
+
+  // Helper to move items to a container (with merging of same items)
+  const moveItemToContainer = useCallback((sourceItemId: number, containerId: number, quantity: number) => {
+    if (!char) return;
+    
+    const sourceItem = char.inventory.find(i => i.id === sourceItemId);
+    const container = char.inventory.find(i => i.id === containerId);
+    if (!sourceItem || !container) return;
+    
+    const sourceQty = Number(sourceItem.quantity) || 1;
+    const moveQty = Math.min(quantity, sourceQty);
+    
+    if (moveQty <= 0) return;
+    
+    // Check if there's already an item of the same name in the container to merge with
+    const existingInContainer = char.inventory.find(i => 
+      i.storedInId === containerId && 
+      i.name === sourceItem.name && 
+      i.id !== sourceItemId &&
+      // Only merge if they have the same basic properties
+      i.ev === sourceItem.ev &&
+      i.weightPer === sourceItem.weightPer
+    );
+    
+    let newInventory = [...char.inventory];
+    
+    if (existingInContainer) {
+      // Merge into existing item in container
+      newInventory = newInventory.map(i => {
+        if (i.id === existingInContainer.id) {
+          return { ...i, quantity: (Number(i.quantity) || 1) + moveQty };
+        }
+        if (i.id === sourceItemId) {
+          if (sourceQty - moveQty <= 0) {
+            return null; // Will be filtered out
+          }
+          return { ...i, quantity: sourceQty - moveQty };
+        }
+        return i;
+      }).filter(Boolean);
+    } else {
+      // No existing item to merge with
+      if (moveQty === sourceQty) {
+        // Move entire stack
+        newInventory = newInventory.map(i => 
+          i.id === sourceItemId ? { ...i, storedInId: containerId } : i
+        );
+      } else {
+        // Split: create new item in container, reduce source
+        const newItem = {
+          ...sourceItem,
+          id: Date.now(),
+          quantity: moveQty,
+          storedInId: containerId
+        };
+        newInventory = newInventory.map(i => 
+          i.id === sourceItemId ? { ...i, quantity: sourceQty - moveQty } : i
+        );
+        newInventory.push(newItem);
+      }
+    }
+    
+    updateChar({ inventory: newInventory });
+  }, [char, updateChar]);
 
   const toggleEquippedEffectItem = useCallback((section: 'attack' | 'unarmed' | 'ac', id: number | string) => {
     if (!char) return;
@@ -4015,7 +4189,7 @@ if (editModal.type === 'acTracking' && char) {
             { id: 'inventory', label: 'Inventory' },
             { id: 'magic', label: 'Magic' },
             { id: 'saves', label: 'Checks/Saves' },
-            { id: 'dice', label: 'Dice' },
+            { id: 'dice', label: 'Dice/Counter' },
             { id: 'companion', label: 'Companion' },
             { id: 'notes', label: 'Notes' }
           ].map(({ id, label }) => (
@@ -4918,6 +5092,77 @@ if (editModal.type === 'acTracking' && char) {
                                     <div className="mt-2 text-center text-sm">
                                       <div>Dice: {rollResult.diceTotal} + {dmgBonus}</div>
                                       <div className="text-xl font-bold text-red-400">Total: {rollResult.total}</div>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Extra Damage Dice (from weapon) */}
+                                  {weaponItem?.weaponExtraDice && weaponItem.weaponExtraDice.length > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-gray-500">
+                                      <div className="text-xs text-gray-300 mb-2 font-semibold">Extra Damage Dice</div>
+                                      {weaponItem.weaponExtraDice.map((extra, idx) => {
+                                        const extraKey = `extra-${attack.id}-${idx}`;
+                                        const extraDiceCount = rollModal[`extraDiceCount_${idx}`] ?? extra.numDice;
+                                        return (
+                                          <div key={idx} className="mb-2 p-2 bg-gray-700 rounded">
+                                            <div className="text-xs text-purple-300 mb-1">{extra.label || `Extra ${extra.numDice}d${extra.dieType}`}</div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <label className="text-xs text-gray-400">Dice #</label>
+                                              <input
+                                                type="text" inputMode="numeric"
+                                                value={extraDiceCount}
+                                                onChange={(e) => {
+                                                  const v = parseInt(e.target.value) || extra.numDice;
+                                                  setRollModal({ ...rollModal, [`extraDiceCount_${idx}`]: Math.max(1, v) });
+                                                }}
+                                                className="w-12 p-1 bg-gray-800 rounded text-white text-xs text-center"
+                                              />
+                                              <span className="text-xs text-gray-400">d{extra.dieType}</span>
+                                            </div>
+                                            <button
+                                              onClick={() => {
+                                                const rolls = [];
+                                                for (let i = 0; i < extraDiceCount; i++) {
+                                                  rolls.push(rollDice(extra.dieType));
+                                                }
+                                                const extraTotal = rolls.reduce((a, b) => a + b, 0);
+                                                setRollModal({ 
+                                                  ...rollModal, 
+                                                  [`extraResult_${idx}`]: { rolls, total: extraTotal }
+                                                });
+                                                // Update total damage if we have a base damage result
+                                                if (rollResult?.total) {
+                                                  setRollResult({
+                                                    ...rollResult,
+                                                    extraDamage: (rollResult.extraDamage || 0) - (rollModal[`extraResult_${idx}`]?.total || 0) + extraTotal,
+                                                    grandTotal: rollResult.total + (rollResult.extraDamage || 0) - (rollModal[`extraResult_${idx}`]?.total || 0) + extraTotal
+                                                  });
+                                                }
+                                              }}
+                                              className="w-full py-1 bg-purple-600 rounded text-xs hover:bg-purple-700"
+                                            >
+                                              Roll {extraDiceCount}d{extra.dieType}
+                                            </button>
+                                            {rollModal[`extraResult_${idx}`] && (
+                                              <div className="text-center text-xs mt-1">
+                                                <div>Rolls: {rollModal[`extraResult_${idx}`].rolls.join(' + ')}</div>
+                                                <div className="font-bold text-purple-400">Extra: {rollModal[`extraResult_${idx}`].total}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                      
+                                      {/* Grand Total if we have extra damage */}
+                                      {rollResult?.total && weaponItem.weaponExtraDice.some((_, idx) => rollModal[`extraResult_${idx}`]) && (
+                                        <div className="mt-2 pt-2 border-t border-gray-500 text-center">
+                                          <div className="text-xs text-gray-400">
+                                            Base: {rollResult.total} + Extra: {weaponItem.weaponExtraDice.reduce((sum, _, idx) => sum + (rollModal[`extraResult_${idx}`]?.total || 0), 0)}
+                                          </div>
+                                          <div className="text-xl font-bold text-green-400">
+                                            Grand Total: {rollResult.total + weaponItem.weaponExtraDice.reduce((sum, _, idx) => sum + (rollModal[`extraResult_${idx}`]?.total || 0), 0)}
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                 </>
@@ -6515,157 +6760,264 @@ if (editModal.type === 'acTracking' && char) {
 
         {activeTab === 'dice' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold">Dice Roller</h2>
-              <button
-                onClick={() => {
-                  setDiceConfig({ d2: 0, d3: 0, d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 });
-                  setDiceRolls(null);
-                }}
-                className="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+            {/* Counters Section */}
+            <div className="bg-gray-700 rounded-lg overflow-hidden">
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-600"
+                onClick={() => setCountersExpanded(!countersExpanded)}
               >
-                Clear All
-              </button>
-            </div>
-            
-            <div className="space-y-3">
-              {[2, 3, 4, 6, 8, 10, 12, 20, 100].map(sides => {
-                const dieResult = diceRolls?.dice.find(d => d.sides === sides);
-                const hasCount = diceConfig[`d${sides}`] > 0;
-                
-                return (
-                  <div key={sides} className="bg-gray-700 p-4 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1">
-                        <label className="block text-lg font-bold text-gray-300 mb-2">d{sides}</label>
-                        <div className="flex items-center gap-2 mb-3">
-                          <button
-                            onClick={() => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, diceConfig[`d${sides}`] - 1) })}
-                            className="p-2 bg-red-600 rounded hover:bg-red-700"
-                          >
-                            <Minus size={20} />
-                          </button>
-                          <input
-                            type="text" inputMode="numeric"
-                            min="0"
-                            value={diceConfig[`d${sides}`]}
-                            onChange={(e) => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, e.target.value === '' ? '' : (parseInt(e.target.value) || 0)) })}
-                            className="w-20 p-2 bg-gray-800 rounded text-white text-center text-xl font-bold"
-                          />
-                          <button
-                            onClick={() => setDiceConfig({ ...diceConfig, [`d${sides}`]: diceConfig[`d${sides}`] + 1 })}
-                            className="p-2 bg-green-600 rounded hover:bg-green-700"
-                          >
-                            <Plus size={20} />
-                          </button>
+                <div className="flex items-center gap-2">
+                  <span>{countersExpanded ? '▼' : '▶'}</span>
+                  <h2 className="text-xl font-bold">Counters</h2>
+                  {(char.counters || []).length > 0 && (
+                    <span className="text-gray-400 text-sm">({char.counters.length})</span>
+                  )}
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCounterModal({ type: 'add', description: '', uses: '' });
+                  }}
+                  className="px-3 py-1 bg-green-600 rounded hover:bg-green-700 text-sm"
+                >
+                  + Add Counter
+                </button>
+              </div>
+              
+              {countersExpanded && (
+                <div className="p-4 pt-0 space-y-3">
+                  {(char.counters || []).length === 0 ? (
+                    <div className="text-gray-400 text-center py-4">
+                      No counters yet. Add one to track abilities with limited uses.
+                    </div>
+                  ) : (
+                    (char.counters || []).map(counter => (
+                      <div key={counter.id} className="bg-gray-800 p-3 rounded-lg">
+                        {/* Description at top with edit button */}
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="font-bold text-white">{counter.description}</div>
                           <button
                             onClick={() => {
-                              const count = diceConfig[`d${sides}`];
-                              if (count > 0) {
-                                const rolls = [];
-                                for (let i = 0; i < count; i++) {
-                                  rolls.push(rollDice(sides));
-                                }
-                                const total = rolls.reduce((a, b) => a + b, 0);
-                                setDiceRolls({ 
-                                  type: 'single',
-                                  dice: [{ sides, count, rolls, subtotal: total }]
-                                });
-                              }
+                              setCounterModal({
+                                type: 'edit',
+                                counter,
+                                description: counter.description,
+                                uses: String(counter.maxUses)
+                              });
                             }}
-                            disabled={diceConfig[`d${sides}`] === 0}
-                            className={`px-6 py-2 rounded-lg text-base font-bold ${
-                              diceConfig[`d${sides}`] === 0 
-                                ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                                : 'bg-blue-600 hover:bg-blue-700'
-                            }`}
+                            className="p-1 bg-gray-600 rounded hover:bg-gray-500"
                           >
-                            Roll
+                            <Edit2 size={14} />
                           </button>
+                        </div>
+                        {/* Counter and buttons below */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-2xl font-bold">
+                            <span className={counter.currentUses === 0 ? 'text-red-400' : 'text-green-400'}>
+                              {counter.currentUses}
+                            </span>
+                            <span className="text-gray-400"> / {counter.maxUses}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (counter.currentUses > 0) {
+                                  updateChar({
+                                    counters: (char.counters || []).map(c =>
+                                      c.id === counter.id ? { ...c, currentUses: c.currentUses - 1 } : c
+                                    )
+                                  });
+                                }
+                              }}
+                              disabled={counter.currentUses === 0}
+                              className={`px-4 py-2 rounded font-bold ${
+                                counter.currentUses === 0
+                                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              Use
+                            </button>
+                            <button
+                              onClick={() => {
+                                updateChar({
+                                  counters: (char.counters || []).map(c =>
+                                    c.id === counter.id ? { ...c, currentUses: c.maxUses } : c
+                                  )
+                                });
+                              }}
+                              className="px-4 py-2 bg-yellow-600 rounded hover:bg-yellow-700 font-bold"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Dice Roller Section */}
+            <div className="bg-gray-700 rounded-lg overflow-hidden">
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-600"
+                onClick={() => setDiceRollerExpanded(!diceRollerExpanded)}
+              >
+                <div className="flex items-center gap-2">
+                  <span>{diceRollerExpanded ? '▼' : '▶'}</span>
+                  <h2 className="text-xl font-bold">Dice Roller</h2>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDiceConfig({ d2: 0, d3: 0, d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 });
+                    setDiceRolls(null);
+                  }}
+                  className="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                >
+                  Clear All
+                </button>
+              </div>
+              
+              {diceRollerExpanded && (
+                <div className="p-4 pt-0 space-y-3">
+                  {[2, 3, 4, 6, 8, 10, 12, 20, 100].map(sides => {
+                    const dieResult = diceRolls?.dice.find(d => d.sides === sides);
+                    
+                    return (
+                      <div key={sides} className="bg-gray-800 p-3 rounded-lg">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                          <label className="text-lg font-bold text-gray-300 w-12 flex-shrink-0">d{sides}</label>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, diceConfig[`d${sides}`] - 1) })}
+                              className="p-2 bg-red-600 rounded hover:bg-red-700 flex-shrink-0"
+                            >
+                              <Minus size={18} />
+                            </button>
+                            <input
+                              type="text" inputMode="numeric"
+                              min="0"
+                              value={diceConfig[`d${sides}`]}
+                              onChange={(e) => setDiceConfig({ ...diceConfig, [`d${sides}`]: Math.max(0, e.target.value === '' ? '' : (parseInt(e.target.value) || 0)) })}
+                              className="w-14 p-2 bg-gray-700 rounded text-white text-center text-lg font-bold"
+                            />
+                            <button
+                              onClick={() => setDiceConfig({ ...diceConfig, [`d${sides}`]: diceConfig[`d${sides}`] + 1 })}
+                              className="p-2 bg-green-600 rounded hover:bg-green-700 flex-shrink-0"
+                            >
+                              <Plus size={18} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                const count = diceConfig[`d${sides}`];
+                                if (count > 0) {
+                                  const rolls = [];
+                                  for (let i = 0; i < count; i++) {
+                                    rolls.push(rollDice(sides));
+                                  }
+                                  const total = rolls.reduce((a, b) => a + b, 0);
+                                  setDiceRolls({ 
+                                    type: 'single',
+                                    dice: [{ sides, count, rolls, subtotal: total }]
+                                  });
+                                }
+                              }}
+                              disabled={diceConfig[`d${sides}`] === 0}
+                              className={`px-4 py-2 rounded font-bold flex-shrink-0 ${
+                                diceConfig[`d${sides}`] === 0 
+                                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+                                  : 'bg-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              Roll
+                            </button>
+                            {dieResult && (
+                              <div className="bg-gray-700 px-3 py-1 rounded flex-shrink-0">
+                                <span className="text-gray-400 text-sm">Total: </span>
+                                <span className="text-xl font-bold text-green-400">{dieResult.subtotal}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         
                         {dieResult && (
-                          <div>
-                            <div className="flex flex-wrap gap-2">
-                              {dieResult.rolls.map((roll, i) => (
-                                <div key={i} className="bg-gray-800 px-3 py-2 rounded text-lg font-bold">
-                                  {roll}
-                                </div>
-                              ))}
-                            </div>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {dieResult.rolls.map((roll, i) => (
+                              <div key={i} className="bg-gray-700 px-2 py-1 rounded text-sm font-bold">
+                                {roll}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
+                    );
+                  })}
+                  
+                  <button
+                    onClick={() => {
+                      const allDice = [];
+                      let grandTotal = 0;
                       
-                      {dieResult && (
-                        <div className="bg-gray-800 px-4 py-3 rounded-lg min-w-[100px] text-center">
-                          <div className="text-xs text-gray-400 mb-1">Total</div>
-                          <div className="text-3xl font-bold text-green-400">{dieResult.subtotal}</div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                      [2, 3, 4, 6, 8, 10, 12, 20, 100].forEach(sides => {
+                        const count = diceConfig[`d${sides}`];
+                        if (count > 0) {
+                          const rolls = [];
+                          for (let i = 0; i < count; i++) {
+                            rolls.push(rollDice(sides));
+                          }
+                          const subtotal = rolls.reduce((a, b) => a + b, 0);
+                          grandTotal += subtotal;
+                          allDice.push({ sides, count, rolls, subtotal });
+                        }
+                      });
+                      
+                      if (allDice.length > 0) {
+                        setDiceRolls({ type: 'all', dice: allDice });
+                      }
+                    }}
+                    className="w-full py-3 bg-purple-600 rounded-lg hover:bg-purple-700 text-lg font-bold"
+                  >
+                    Roll All Dice
+                  </button>
 
-            <button
-              onClick={() => {
-                const allDice = [];
-                let grandTotal = 0;
-                
-                [2, 3, 4, 6, 8, 10, 12, 20, 100].forEach(sides => {
-                  const count = diceConfig[`d${sides}`];
-                  if (count > 0) {
-                    const rolls = [];
-                    for (let i = 0; i < count; i++) {
-                      rolls.push(rollDice(sides));
-                    }
-                    const subtotal = rolls.reduce((a, b) => a + b, 0);
-                    grandTotal += subtotal;
-                    allDice.push({ sides, count, rolls, subtotal });
-                  }
-                });
-                
-                if (allDice.length > 0) {
-                  setDiceRolls({ type: 'all', dice: allDice });
-                }
-              }}
-              className="w-full py-4 bg-purple-600 rounded-lg hover:bg-purple-700 text-xl font-bold"
-            >
-              Roll All Dice
-            </button>
-
-            {diceRolls?.type === 'all' && (
-              <div className="bg-gray-800 p-6 rounded-lg">
-                <div className="text-2xl font-bold mb-4">All Dice Results</div>
-                
-                {diceRolls.dice.map((die, idx) => (
-                  <div key={idx} className="mb-4 pb-4 border-b border-gray-700 last:border-b-0">
-                    <div className="text-lg font-bold text-blue-400 mb-2">
-                      {die.count}d{die.sides}
-                    </div>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {die.rolls.map((roll, i) => (
-                        <div key={i} className="bg-gray-700 px-3 py-2 rounded text-lg font-bold">
-                          {roll}
+                  {diceRolls?.type === 'all' && (
+                    <div className="bg-gray-800 p-4 rounded-lg">
+                      <div className="text-xl font-bold mb-3">All Dice Results</div>
+                      
+                      {diceRolls.dice.map((die, idx) => (
+                        <div key={idx} className="mb-3 pb-3 border-b border-gray-700 last:border-b-0">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="font-bold text-blue-400">
+                              {die.count}d{die.sides}
+                            </div>
+                            <div className="text-gray-400">
+                              Subtotal: <span className="font-bold text-white">{die.subtotal}</span>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {die.rolls.map((roll, i) => (
+                              <div key={i} className="bg-gray-700 px-2 py-1 rounded text-sm font-bold">
+                                {roll}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       ))}
+                      
+                      <div className="border-t-2 border-green-500 pt-3 mt-3 text-center">
+                        <div className="text-sm text-gray-400 mb-1">Grand Total</div>
+                        <div className="text-4xl font-bold text-green-400">
+                          {diceRolls.dice.reduce((sum, die) => sum + die.subtotal, 0)}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-base text-gray-400">
-                      Subtotal: <span className="font-bold text-white text-xl">{die.subtotal}</span>
-                    </div>
-                  </div>
-                ))}
-                
-                <div className="border-t-2 border-green-500 pt-4 mt-4 text-center">
-                  <div className="text-lg text-gray-400 mb-2">Grand Total</div>
-                  <div className="text-5xl font-bold text-green-400">
-                    {diceRolls.dice.reduce((sum, die) => sum + die.subtotal, 0)}
-                  </div>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -6946,18 +7298,41 @@ if (editModal.type === 'acTracking' && char) {
                 </button>
               </div>
               
-              {/* Wallet breakdown with item worth */}
+              {/* Wallet breakdown with gem worth */}
               {(() => {
                 const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
-                const totalGPValue = ((wallet.platinum || 0) * 10) + ((wallet.electrum || 0) * 5) + (wallet.gold || 0) + ((wallet.silver || 0) * 0.1) + ((wallet.copper || 0) * 0.01);
                 
-                // Calculate item worth
-                const itemsWithWorth = (char.inventory || []).filter(item => {
+                // Calculate coins in all magical containers
+                const magicalContainers = (char.inventory || []).filter(c => c.isContainer && c.isMagicalContainer);
+                const bagsCoins = magicalContainers.reduce((acc, c) => {
+                  if (c.storedCoins) {
+                    acc.copper += Math.round(c.storedCoins.copper || 0);
+                    acc.silver += Math.round(c.storedCoins.silver || 0);
+                    acc.gold += Math.round(c.storedCoins.gold || 0);
+                    acc.electrum += Math.round(c.storedCoins.electrum || 0);
+                    acc.platinum += Math.round(c.storedCoins.platinum || 0);
+                  } else if (c.storedCoinsGP) {
+                    acc.gold += Math.floor(c.storedCoinsGP);
+                  }
+                  return acc;
+                }, { copper: 0, silver: 0, gold: 0, electrum: 0, platinum: 0 });
+                
+                // Total coins = wallet + bags
+                const totalPP = Math.round(wallet.platinum || 0) + bagsCoins.platinum;
+                const totalGP = Math.round(wallet.gold || 0) + bagsCoins.gold;
+                const totalEP = Math.round(wallet.electrum || 0) + bagsCoins.electrum;
+                const totalSP = Math.round(wallet.silver || 0) + bagsCoins.silver;
+                const totalCP = Math.round(wallet.copper || 0) + bagsCoins.copper;
+                
+                const totalGPValue = (totalPP * 10) + (totalEP * 5) + totalGP + (totalSP * 0.1) + (totalCP * 0.01);
+                
+                // Calculate gem worth (only items marked as gems with worth)
+                const gemsWithWorth = (char.inventory || []).filter(item => {
                   const worthAmount = Number(item.worthAmount) || 0;
-                  return worthAmount > 0;
+                  return worthAmount > 0 && !!item.isGem;
                 });
                 
-                const totalItemWorthGP = itemsWithWorth.reduce((sum, item) => {
+                const totalGemWorthGP = gemsWithWorth.reduce((sum, item) => {
                   const worthAmount = Number(item.worthAmount) || 0;
                   const worthUnit = String(item.worthUnit || 'gp').toLowerCase();
                   const qty = Number(item.quantity) || 1;
@@ -6970,11 +7345,17 @@ if (editModal.type === 'acTracking' && char) {
                   return sum + (gpValue * qty);
                 }, 0);
                 
-                const totalNetWorth = totalGPValue + totalItemWorthGP;
+                const totalNetWorth = totalGPValue + totalGemWorthGP;
+                const totalCoinsInBags = bagsCoins.copper + bagsCoins.silver + bagsCoins.gold + bagsCoins.electrum + bagsCoins.platinum;
                 
                 return (
                   <>
                     <div className="text-2xl font-bold text-yellow-400">{totalGPValue.toFixed(2)} GP</div>
+                    {totalCoinsInBags > 0 && (
+                      <div className="text-xs text-gray-500">
+                        ({totalCoinsInBags.toLocaleString()} coins in bags)
+                      </div>
+                    )}
                     
                     {/* Coin weight/EV display - only show when included in totals */}
                     {char.includeCoinWeight && (
@@ -6985,23 +7366,23 @@ if (editModal.type === 'acTracking' && char) {
                       </div>
                     )}
                     
-                    {/* Item Worth */}
-                    {itemsWithWorth.length > 0 && (
+                    {/* Gem Worth */}
+                    {gemsWithWorth.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-600">
                         <button
-                          onClick={() => setExpandedInventoryCategories(prev => ({ ...prev, _itemWorth: !prev._itemWorth }))}
+                          onClick={() => setExpandedInventoryCategories(prev => ({ ...prev, _gemWorth: !prev._gemWorth }))}
                           className="w-full flex items-center justify-between text-left hover:bg-gray-600 rounded p-1 -m-1"
                         >
                           <span className="text-sm text-gray-400">
-                            Item Worth: <span className="text-white font-semibold">{totalItemWorthGP.toFixed(2)} GP</span>
-                            <span className="text-gray-500 ml-2">({itemsWithWorth.length} item{itemsWithWorth.length !== 1 ? 's' : ''})</span>
+                            Gem Worth: <span className="text-white font-semibold">{totalGemWorthGP.toFixed(2)} GP</span>
+                            <span className="text-gray-500 ml-2">({gemsWithWorth.length} gem{gemsWithWorth.length !== 1 ? 's' : ''})</span>
                           </span>
-                          {expandedInventoryCategories._itemWorth ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                          {expandedInventoryCategories._gemWorth ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
                         </button>
                         
-                        {expandedInventoryCategories._itemWorth && (
+                        {expandedInventoryCategories._gemWorth && (
                           <div className="mt-2 space-y-1 text-sm">
-                            {itemsWithWorth.map(item => {
+                            {gemsWithWorth.map(item => {
                               const worthAmount = Number(item.worthAmount) || 0;
                               const worthUnit = String(item.worthUnit || 'gp').toUpperCase();
                               const qty = Number(item.quantity) || 1;
@@ -7018,7 +7399,7 @@ if (editModal.type === 'acTracking' && char) {
                     )}
                     
                     {/* Total Net Worth */}
-                    {itemsWithWorth.length > 0 && (
+                    {gemsWithWorth.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-600">
                         <div className="flex justify-between items-center">
                           <span className="text-sm text-gray-400">Total Net Worth:</span>
@@ -7115,7 +7496,18 @@ if (editModal.type === 'acTracking' && char) {
                                         <span className="text-gray-400">×{item.quantity}</span>
                                       </div>
                                       <div className="text-sm text-gray-400 ml-5">
-                                        {totalWeight.toFixed(2)} lb • EV: {Number(item.ev || 0).toFixed(1)}
+                                        {totalWeight.toFixed(2)} lb • EV: {(() => {
+                                          const ev = Number(item.ev || 0);
+                                          const qty = Number(item.quantity || 1);
+                                          if (ev > 0) {
+                                            const totalEV = ev * qty;
+                                            return qty > 1 ? `${totalEV.toFixed(1)} (${ev}/ea)` : totalEV.toFixed(1);
+                                          } else {
+                                            // Zero-EV: 10 items = 1 EV
+                                            const totalEV = Math.floor(qty / 10);
+                                            return totalEV > 0 ? `${totalEV} (10:1)` : '0 (10:1)';
+                                          }
+                                        })()}
                                         {(item.worthAmount || 0) > 0 && ` • ${item.worthAmount} ${(item.worthUnit || 'gp').toUpperCase()}`}
                                       </div>
                                       {otherCats.length > 0 && (
@@ -7175,19 +7567,31 @@ if (editModal.type === 'acTracking' && char) {
                                         if (invItem.id === item.id) return false;
                                         
                                         const itemEV = Number(invItem.ev) || 0;
-                                        const itemWeight = (Number(invItem.weightPer) || 0) * (Number(invItem.quantity) || 1);
+                                        const singleItemWeight = Number(invItem.weightPer) || 0;
                                         
                                         if (item.isMagicalContainer) {
-                                          // Check weight limit
+                                          // Check weight limit - can we fit at least one?
                                           const maxWeight = Number(item.containerMaxWeight) || Infinity;
-                                          return (info.totalWeight + itemWeight) <= maxWeight;
+                                          return (info.totalWeight + singleItemWeight) <= maxWeight;
                                         } else {
-                                          // Check capacity and EV rule
+                                          // Check capacity and EV rule - can we fit at least one?
                                           const capacity = Number(item.containerCapacity) || 0;
                                           if (capacity === 0) return true; // Unlimited
-                                          if (itemEV >= capacity) return false;
-                                          const itemQty = Number(invItem.quantity) || 1;
-                                          return (info.itemCount + itemQty) <= capacity;
+                                          if (itemEV > 0 && itemEV >= capacity) return false;
+                                          
+                                          // Check if there's room for at least 1 more slot
+                                          if (itemEV > 0) {
+                                            return info.slotCount < capacity;
+                                          } else {
+                                            // Zero-EV: check if adding would exceed capacity
+                                            const zeroEVInContainer = info.items
+                                              .filter(it => (Number(it.ev) || 0) === 0)
+                                              .reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+                                            const currentZeroEVSlots = Math.ceil(zeroEVInContainer / 10);
+                                            const newZeroEVSlots = Math.ceil((zeroEVInContainer + 1) / 10);
+                                            const additionalSlots = newZeroEVSlots - currentZeroEVSlots;
+                                            return (info.slotCount + additionalSlots) <= capacity;
+                                          }
                                         }
                                       });
                                       
@@ -7199,18 +7603,28 @@ if (editModal.type === 'acTracking' && char) {
                                           <div className="text-gray-300 mb-2">
                                             {item.isMagicalContainer 
                                               ? `${info.totalWeight.toFixed(1)} / ${info.maxWeight || '∞'} lbs used`
-                                              : `${info.itemCount} / ${info.capacity || '∞'} items`
+                                              : `${info.slotCount} / ${info.capacity || '∞'} slots`
                                             }
+                                            {!item.isMagicalContainer && info.itemCount !== info.slotCount && (
+                                              <span className="text-gray-500 ml-1">({info.itemCount} items)</span>
+                                            )}
                                           </div>
                                           
                                           {/* Coin display for magical containers (no button, managed from wallet) */}
-                                          {item.isMagicalContainer && info.storedCoinsGP > 0 && (
+                                          {item.isMagicalContainer && info.storedCoinCount > 0 && (
                                             <div className="mb-2 text-yellow-400">
-                                              💰 {info.storedCoinsGP} GP ({info.storedCoinsWeight.toFixed(2)} lb)
+                                              💰 {info.storedCoinsGP.toFixed(2)} GP ({info.storedCoinCount.toLocaleString()} coins, {info.storedCoinsWeight.toFixed(2)} lb)
+                                              <div className="text-xs text-gray-400 mt-1">
+                                                {info.storedCoins.copper > 0 && <span className="mr-2 text-orange-400">{info.storedCoins.copper} CP</span>}
+                                                {info.storedCoins.silver > 0 && <span className="mr-2">{info.storedCoins.silver} SP</span>}
+                                                {info.storedCoins.gold > 0 && <span className="mr-2 text-yellow-400">{info.storedCoins.gold} GP</span>}
+                                                {info.storedCoins.electrum > 0 && <span className="mr-2 text-blue-300">{info.storedCoins.electrum} EP</span>}
+                                                {info.storedCoins.platinum > 0 && <span className="text-gray-300">{info.storedCoins.platinum} PP</span>}
+                                              </div>
                                             </div>
                                           )}
                                           
-                                          {/* Add item dropdown */}
+                                          {/* Add item dropdown - shows quantity modal if qty > 1 */}
                                           {availableItems.length > 0 && (
                                             <div className="mb-2">
                                               <select
@@ -7221,12 +7635,45 @@ if (editModal.type === 'acTracking' && char) {
                                                   const itemId = Number(e.target.value);
                                                   if (!itemId) return;
                                                   
-                                                  // Add item to container
-                                                  updateChar({
-                                                    inventory: char.inventory.map(i => 
-                                                      i.id === itemId ? { ...i, storedInId: item.id } : i
-                                                    )
-                                                  });
+                                                  const sourceItem = char.inventory.find(i => i.id === itemId);
+                                                  if (!sourceItem) return;
+                                                  
+                                                  const sourceQty = Number(sourceItem.quantity) || 1;
+                                                  const sourceEV = Number(sourceItem.ev) || 0;
+                                                  
+                                                  // Calculate max that can fit
+                                                  let maxCanFit = sourceQty;
+                                                  if (!item.isMagicalContainer) {
+                                                    const capacity = Number(item.containerCapacity) || 0;
+                                                    const slotsLeft = capacity - info.slotCount;
+                                                    
+                                                    if (sourceEV > 0) {
+                                                      maxCanFit = Math.min(sourceQty, slotsLeft);
+                                                    } else {
+                                                      // Zero-EV: calculate based on 10:1 rule
+                                                      const zeroEVInContainer = info.items
+                                                        .filter(it => (Number(it.ev) || 0) === 0)
+                                                        .reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+                                                      const currentZeroEVSlots = Math.ceil(zeroEVInContainer / 10);
+                                                      const maxZeroEVSlots = capacity - (info.slotCount - currentZeroEVSlots);
+                                                      const maxZeroEVItems = maxZeroEVSlots * 10 - zeroEVInContainer;
+                                                      maxCanFit = Math.min(sourceQty, Math.max(0, maxZeroEVItems));
+                                                    }
+                                                  }
+                                                  
+                                                  if (sourceQty === 1) {
+                                                    // Only 1 item, just move it directly
+                                                    moveItemToContainer(itemId, item.id, 1);
+                                                  } else {
+                                                    // Show modal to ask how many
+                                                    setMoveToContainerModal({
+                                                      sourceItemId: itemId,
+                                                      containerId: item.id,
+                                                      maxQty: maxCanFit,
+                                                      qty: String(maxCanFit),
+                                                      itemName: sourceItem.name
+                                                    });
+                                                  }
                                                 }}
                                                 onClick={(e) => e.stopPropagation()}
                                               >
@@ -7290,7 +7737,7 @@ if (editModal.type === 'acTracking' && char) {
                                           ) : (
                                             !item.isMagicalContainer && <div className="text-gray-500 italic">Empty</div>
                                           )}
-                                          {item.isMagicalContainer && info.items.length === 0 && info.storedCoinsGP === 0 && (
+                                          {item.isMagicalContainer && info.items.length === 0 && info.storedCoinCount === 0 && (
                                             <div className="text-gray-500 italic">Empty</div>
                                           )}
                                         </div>
@@ -7742,6 +8189,182 @@ if (editModal.type === 'acTracking' && char) {
                 className="flex-1 py-2 bg-gray-600 rounded hover:bg-gray-500 font-semibold"
               >
                 Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move to Container Modal */}
+      {moveToContainerModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
+          onClick={() => setMoveToContainerModal(null)}
+        >
+          <div 
+            className="bg-gray-800 rounded-lg p-6 w-full max-w-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold mb-4">Move to Container</h3>
+            <p className="text-gray-300 mb-4">
+              How many <span className="text-white font-semibold">{moveToContainerModal.itemName}</span> do you want to move?
+            </p>
+            <div className="mb-4">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={moveToContainerModal.qty}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '' || /^\d+$/.test(val)) {
+                    setMoveToContainerModal({ ...moveToContainerModal, qty: val });
+                  }
+                }}
+                className="w-full p-2 bg-gray-700 rounded text-white text-center text-lg"
+                autoFocus
+              />
+              <div className="text-xs text-gray-500 text-center mt-1">
+                Max: {moveToContainerModal.maxQty}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setMoveToContainerModal(null)}
+                className="py-2 bg-gray-600 rounded hover:bg-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const qty = parseInt(moveToContainerModal.qty) || 0;
+                  if (qty > 0 && qty <= moveToContainerModal.maxQty) {
+                    moveItemToContainer(
+                      moveToContainerModal.sourceItemId,
+                      moveToContainerModal.containerId,
+                      qty
+                    );
+                    setMoveToContainerModal(null);
+                  } else if (qty > moveToContainerModal.maxQty) {
+                    showToast(`Maximum is ${moveToContainerModal.maxQty}`, 'warning');
+                  }
+                }}
+                className="py-2 bg-blue-600 rounded hover:bg-blue-700"
+              >
+                Move
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Counter Modal */}
+      {counterModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
+          onClick={() => setCounterModal(null)}
+        >
+          <div 
+            className="bg-gray-800 rounded-lg p-6 w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-xl font-bold mb-4">
+              {counterModal.type === 'add' ? 'Add Counter' : 'Edit Counter'}
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Description</label>
+                <input
+                  type="text"
+                  value={counterModal.description}
+                  onChange={(e) => setCounterModal({ ...counterModal, description: e.target.value })}
+                  placeholder="e.g., Stun Attack"
+                  className="w-full p-2 bg-gray-700 rounded text-white"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Uses (max per day/rest)</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={counterModal.uses}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '' || /^\d+$/.test(val)) {
+                      setCounterModal({ ...counterModal, uses: val });
+                    }
+                  }}
+                  placeholder="e.g., 7"
+                  className="w-full p-2 bg-gray-700 rounded text-white"
+                />
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2 mt-6">
+              {counterModal.type === 'edit' && (
+                <button
+                  onClick={() => {
+                    if (counterModal.counter) {
+                      updateChar({
+                        counters: (char.counters || []).filter(c => c.id !== counterModal.counter.id)
+                      });
+                      setCounterModal(null);
+                    }
+                  }}
+                  className="py-2 bg-red-600 rounded hover:bg-red-700 col-span-2 mb-2"
+                >
+                  Delete Counter
+                </button>
+              )}
+              <button
+                onClick={() => setCounterModal(null)}
+                className="py-2 bg-gray-600 rounded hover:bg-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const uses = parseInt(counterModal.uses) || 0;
+                  if (!counterModal.description.trim()) {
+                    showToast('Please enter a description', 'warning');
+                    return;
+                  }
+                  if (uses <= 0) {
+                    showToast('Please enter a valid number of uses', 'warning');
+                    return;
+                  }
+                  
+                  if (counterModal.type === 'add') {
+                    const newCounter = {
+                      id: Date.now(),
+                      description: counterModal.description.trim(),
+                      maxUses: uses,
+                      currentUses: uses
+                    };
+                    updateChar({
+                      counters: [...(char.counters || []), newCounter]
+                    });
+                  } else if (counterModal.counter) {
+                    updateChar({
+                      counters: (char.counters || []).map(c =>
+                        c.id === counterModal.counter.id
+                          ? { 
+                              ...c, 
+                              description: counterModal.description.trim(),
+                              maxUses: uses,
+                              currentUses: Math.min(c.currentUses, uses)
+                            }
+                          : c
+                      )
+                    });
+                  }
+                  setCounterModal(null);
+                }}
+                className="py-2 bg-blue-600 rounded hover:bg-blue-700"
+              >
+                {counterModal.type === 'add' ? 'Add' : 'Save'}
               </button>
             </div>
           </div>
@@ -9473,51 +10096,84 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </label>
                   </div>
 
-                  {/* Current Coin Breakdown */}
+                  {/* Current Coin Breakdown - includes coins in bags */}
                   {(() => {
                     const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
-                    const pp = wallet.platinum || 0;
-                    const gp = wallet.gold || 0;
-                    const ep = wallet.electrum || 0;
-                    const sp = wallet.silver || 0;
-                    const cp = wallet.copper || 0;
+                    
+                    // Calculate coins in all magical containers
+                    const magicalContainers = (char.inventory || []).filter(c => c.isContainer && c.isMagicalContainer);
+                    const bagsCoins = magicalContainers.reduce((acc, c) => {
+                      if (c.storedCoins) {
+                        acc.copper += Math.round(c.storedCoins.copper || 0);
+                        acc.silver += Math.round(c.storedCoins.silver || 0);
+                        acc.gold += Math.round(c.storedCoins.gold || 0);
+                        acc.electrum += Math.round(c.storedCoins.electrum || 0);
+                        acc.platinum += Math.round(c.storedCoins.platinum || 0);
+                      } else if (c.storedCoinsGP) {
+                        // Legacy: treat as gold
+                        acc.gold += Math.floor(c.storedCoinsGP);
+                      }
+                      return acc;
+                    }, { copper: 0, silver: 0, gold: 0, electrum: 0, platinum: 0 });
+                    
+                    // Total coins = wallet + bags
+                    const pp = Math.round(wallet.platinum || 0) + bagsCoins.platinum;
+                    const gp = Math.round(wallet.gold || 0) + bagsCoins.gold;
+                    const ep = Math.round(wallet.electrum || 0) + bagsCoins.electrum;
+                    const sp = Math.round(wallet.silver || 0) + bagsCoins.silver;
+                    const cp = Math.round(wallet.copper || 0) + bagsCoins.copper;
+                    
+                    // Coins on person (not in bags) - for weight calculation
+                    const ppOnPerson = Math.round(wallet.platinum || 0);
+                    const gpOnPerson = Math.round(wallet.gold || 0);
+                    const epOnPerson = Math.round(wallet.electrum || 0);
+                    const spOnPerson = Math.round(wallet.silver || 0);
+                    const cpOnPerson = Math.round(wallet.copper || 0);
+                    const coinsOnPerson = ppOnPerson + gpOnPerson + epOnPerson + spOnPerson + cpOnPerson;
+                    
                     const totalCoins = pp + gp + ep + sp + cp;
                     const totalGPValue = (pp * 10) + gp + (ep * 5) + (sp * 0.1) + (cp * 0.01);
-                    const coinWeight = totalCoins / 16;
-                    const coinEV = totalCoins / 160;
+                    const coinWeight = coinsOnPerson / 16; // Only coins on person count for weight
+                    const coinEV = coinsOnPerson / 160;
+                    
+                    const coinsInBags = totalCoins - coinsOnPerson;
                     
                     return (
                       <div className="bg-gray-900 rounded p-3 mb-4">
                         <div className="text-center mb-3">
                           <div className="text-2xl font-bold text-yellow-400">{totalGPValue.toFixed(2)} GP</div>
-                          <div className="text-xs text-gray-500">Total Value</div>
+                          <div className="text-xs text-gray-500">Total Wealth</div>
                         </div>
                         
-                        <div className="grid grid-cols-5 gap-2 text-center mb-3">
-                          <div className="bg-gray-800 rounded p-2">
-                            <div className="text-lg font-bold text-gray-300">{pp}</div>
-                            <div className="text-xs text-gray-500">PP</div>
+                        <div className="grid grid-cols-5 gap-1 text-center mb-3">
+                          <div className="bg-gray-800 rounded p-2 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-orange-400 truncate">{cp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">CP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2">
-                            <div className="text-lg font-bold text-yellow-400">{gp}</div>
-                            <div className="text-xs text-gray-500">GP</div>
-                          </div>
-                          <div className="bg-gray-800 rounded p-2">
-                            <div className="text-lg font-bold text-blue-300">{ep}</div>
-                            <div className="text-xs text-gray-500">EP</div>
-                          </div>
-                          <div className="bg-gray-800 rounded p-2">
-                            <div className="text-lg font-bold text-gray-400">{sp}</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-gray-400 truncate">{sp.toLocaleString()}</div>
                             <div className="text-xs text-gray-500">SP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2">
-                            <div className="text-lg font-bold text-orange-400">{cp}</div>
-                            <div className="text-xs text-gray-500">CP</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-yellow-400 truncate">{gp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">GP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-blue-300 truncate">{ep.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">EP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-gray-300 truncate">{pp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500">PP</div>
                           </div>
                         </div>
                         
                         <div className="text-xs text-gray-400 text-center">
-                          {totalCoins} coins • {coinWeight.toFixed(2)} lb • {coinEV.toFixed(2)} EV
+                          {totalCoins.toLocaleString()} total coins
+                          {coinsInBags > 0 && <span className="text-gray-500"> ({coinsInBags.toLocaleString()} in bags)</span>}
+                        </div>
+                        <div className="text-xs text-gray-400 text-center mt-1">
+                          On person: {coinsOnPerson.toLocaleString()} coins • {coinWeight.toFixed(2)} lb • {coinEV.toFixed(2)} EV
                         </div>
                         <div className="text-xs text-gray-500 text-center mt-1">
                           16 coins = 1 lb • 160 coins = 1 EV
@@ -9531,32 +10187,90 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     const magicalContainers = (char.inventory || []).filter(c => c.isContainer && c.isMagicalContainer);
                     if (magicalContainers.length === 0) return null;
                     
-                    const totalStoredCoins = Math.round(magicalContainers.reduce((sum, c) => sum + (Number(c.storedCoinsGP) || 0), 0) * 100) / 100;
+                    // Calculate total stored coins across all containers
+                    const totalStoredCoinsGP = magicalContainers.reduce((sum, c) => {
+                      if (c.storedCoins) {
+                        return sum + (c.storedCoins.platinum * 10) + (c.storedCoins.electrum * 5) + 
+                               c.storedCoins.gold + (c.storedCoins.silver * 0.1) + (c.storedCoins.copper * 0.01);
+                      }
+                      return sum + (Number(c.storedCoinsGP) || 0);
+                    }, 0);
+                    const totalStoredCoinCount = magicalContainers.reduce((sum, c) => {
+                      if (c.storedCoins) {
+                        return sum + Math.round(c.storedCoins.platinum || 0) + Math.round(c.storedCoins.gold || 0) + 
+                               Math.round(c.storedCoins.electrum || 0) + Math.round(c.storedCoins.silver || 0) + 
+                               Math.round(c.storedCoins.copper || 0);
+                      }
+                      return sum + Math.floor(Number(c.storedCoinsGP) || 0);
+                    }, 0);
+                    
                     const selectedContainerId = walletForm.selectedCoinContainer;
                     const selectedContainer = selectedContainerId ? magicalContainers.find(c => c.id === selectedContainerId) : null;
-                    
-                    // Calculate limits for selected container
-                    let maxCoinsInBag = 0;
-                    let currentCoinsInBag = 0;
                     const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
-                    const totalGPValue = ((wallet.platinum || 0) * 10) + ((wallet.electrum || 0) * 5) + (wallet.gold || 0) + ((wallet.silver || 0) * 0.1) + ((wallet.copper || 0) * 0.01);
-                    let totalAvailableCoins = Math.round(totalGPValue * 100) / 100;
                     
-                    if (selectedContainer) {
-                      const info = getContainerInfo(selectedContainer.id);
-                      currentCoinsInBag = Math.round((Number(selectedContainer.storedCoinsGP) || 0) * 100) / 100;
-                      const maxWeight = Number(selectedContainer.containerMaxWeight) || Infinity;
-                      const weightUsedByItems = info.totalWeight - info.storedCoinsWeight;
-                      const availableWeightForCoins = maxWeight === Infinity ? Infinity : (maxWeight - weightUsedByItems);
-                      maxCoinsInBag = maxWeight === Infinity ? Math.round((totalGPValue + currentCoinsInBag) * 100) / 100 : Math.floor(availableWeightForCoins * 16);
-                      totalAvailableCoins = Math.round((totalGPValue + currentCoinsInBag) * 100) / 100;
+                    // Get current coins in selected container (ensure whole numbers)
+                    let containerCoins = selectedContainer?.storedCoins 
+                      ? { 
+                          platinum: Math.round(selectedContainer.storedCoins.platinum || 0),
+                          gold: Math.round(selectedContainer.storedCoins.gold || 0),
+                          electrum: Math.round(selectedContainer.storedCoins.electrum || 0),
+                          silver: Math.round(selectedContainer.storedCoins.silver || 0),
+                          copper: Math.round(selectedContainer.storedCoins.copper || 0)
+                        } 
+                      : { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                    // Migrate legacy storedCoinsGP to gold
+                    if (selectedContainer && !selectedContainer.storedCoins && selectedContainer.storedCoinsGP) {
+                      containerCoins.gold = Math.floor(selectedContainer.storedCoinsGP);
                     }
                     
-                    const sliderMax = selectedContainer ? Math.round(Math.min(maxCoinsInBag, totalAvailableCoins) * 100) / 100 : 0;
+                    const containerInfo = selectedContainer ? getContainerInfo(selectedContainer.id) : null;
+                    const maxWeight = selectedContainer ? (Number(selectedContainer.containerMaxWeight) || Infinity) : 0;
+                    const weightUsedByItems = containerInfo ? (containerInfo.totalWeight - containerInfo.storedCoinsWeight) : 0;
+                    const availableWeightForCoins = maxWeight === Infinity ? Infinity : Math.max(0, maxWeight - weightUsedByItems);
+                    const maxCoinsByWeight = maxWeight === Infinity ? Infinity : Math.floor(availableWeightForCoins * 16);
+                    
+                    const currentCoinCount = containerCoins.platinum + containerCoins.gold + containerCoins.electrum + 
+                                            containerCoins.silver + containerCoins.copper;
+                    
+                    // Get which coins are selected for moving
+                    const moveCoinsSelection = walletForm.moveCoins || { copper: true, silver: true, gold: true, electrum: true, platinum: true };
+                    
+                    // Ensure wallet values are whole numbers
+                    const walletRounded = {
+                      copper: Math.round(wallet.copper || 0),
+                      silver: Math.round(wallet.silver || 0),
+                      gold: Math.round(wallet.gold || 0),
+                      electrum: Math.round(wallet.electrum || 0),
+                      platinum: Math.round(wallet.platinum || 0)
+                    };
+                    
+                    // Calculate totals for selected coin types only (coins NOT in this container)
+                    const selectedWalletTotal = 
+                      (moveCoinsSelection.copper ? walletRounded.copper : 0) +
+                      (moveCoinsSelection.silver ? walletRounded.silver : 0) +
+                      (moveCoinsSelection.gold ? walletRounded.gold : 0) +
+                      (moveCoinsSelection.electrum ? walletRounded.electrum : 0) +
+                      (moveCoinsSelection.platinum ? walletRounded.platinum : 0);
+                    
+                    const selectedContainerTotal = 
+                      (moveCoinsSelection.copper ? containerCoins.copper : 0) +
+                      (moveCoinsSelection.silver ? containerCoins.silver : 0) +
+                      (moveCoinsSelection.gold ? containerCoins.gold : 0) +
+                      (moveCoinsSelection.electrum ? containerCoins.electrum : 0) +
+                      (moveCoinsSelection.platinum ? containerCoins.platinum : 0);
+                    
+                    const totalSelectedCoins = selectedWalletTotal + selectedContainerTotal;
+                    const sliderMax = selectedContainer ? (maxCoinsByWeight === Infinity ? totalSelectedCoins : Math.min(maxCoinsByWeight, totalSelectedCoins)) : 0;
+                    
+                    const containerGPValue = (containerCoins.platinum * 10) + (containerCoins.electrum * 5) + 
+                                            containerCoins.gold + (containerCoins.silver * 0.1) + (containerCoins.copper * 0.01);
                     
                     return (
                       <div className="mb-4 p-3 bg-gray-900 rounded">
                         <div className="text-sm text-gray-400 mb-2">💰 Store Coins in Magical Container</div>
+                        <div className="text-xs text-gray-500 mb-2">
+                          Moving coins to a bag reduces your carried weight/EV. Your total wealth stays the same.
+                        </div>
                         
                         {/* Container dropdown */}
                         <select
@@ -9569,73 +10283,103 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         >
                           <option value="">Select a magical container...</option>
                           {magicalContainers.map(c => {
-                            const storedCoins = Math.round((Number(c.storedCoinsGP) || 0) * 100) / 100;
+                            const info = getContainerInfo(c.id);
                             return (
                               <option key={c.id} value={c.id}>
-                                {c.name} ({storedCoins} GP stored)
+                                {c.name} ({info.storedCoinCount} coins in bag)
                               </option>
                             );
                           })}
                         </select>
                         
-                        {/* Slider when container selected */}
+                        {/* Coin transfer controls when container selected */}
                         {selectedContainer && (
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-xs text-gray-400">
-                              <span>Wallet: {totalGPValue.toFixed(2)} GP</span>
-                              <span>In {selectedContainer.name}: {currentCoinsInBag.toFixed(2)} GP</span>
+                          <div className="space-y-3">
+                            {/* Coin type checkboxes - which coins to move */}
+                            <div className="text-xs text-gray-400 mb-1">Select coins to move:</div>
+                            <div className="flex flex-wrap gap-3 mb-3">
+                              {[
+                                { key: 'copper', label: 'CP', color: 'text-orange-400' },
+                                { key: 'silver', label: 'SP', color: 'text-gray-400' },
+                                { key: 'gold', label: 'GP', color: 'text-yellow-400' },
+                                { key: 'electrum', label: 'EP', color: 'text-blue-300' },
+                                { key: 'platinum', label: 'PP', color: 'text-gray-300' }
+                              ].map(coin => (
+                                <label key={coin.key} className="flex items-center gap-1 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={moveCoinsSelection[coin.key]}
+                                    onChange={(e) => {
+                                      updateWalletForm({ 
+                                        moveCoins: { ...moveCoinsSelection, [coin.key]: e.target.checked }
+                                      });
+                                    }}
+                                    className="w-3 h-3"
+                                  />
+                                  <span className={coin.color}>{coin.label}</span>
+                                  <span className="text-gray-500">({walletRounded[coin.key]}/{containerCoins[coin.key]})</span>
+                                </label>
+                              ))}
                             </div>
                             
+                            {/* Current status */}
+                            <div className="flex justify-between text-xs text-gray-400">
+                              <span>On person: {selectedWalletTotal} coins</span>
+                              <span>In bag: {selectedContainerTotal} coins</span>
+                            </div>
+                            
+                            {/* Slider - moves coins based on slider position */}
                             <input
                               type="range"
                               min={0}
                               max={sliderMax}
-                              step={0.01}
-                              value={currentCoinsInBag}
-                              onInput={(e) => {
-                                const target = e.target as HTMLInputElement;
-                                const newCoinsInBag = Math.round(Number(target.value) * 100) / 100;
-                                const diff = Math.round((newCoinsInBag - currentCoinsInBag) * 100) / 100;
+                              step={1}
+                              value={selectedContainerTotal}
+                              onChange={(e) => {
+                                const targetInBag = parseInt(e.target.value) || 0;
+                                const diff = targetInBag - selectedContainerTotal;
                                 
-                                // Deduct from gold first, then other denominations
-                                const wallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
-                                let newWallet = { ...wallet };
+                                if (diff === 0) return;
                                 
-                                if (diff > 0) {
-                                  // Moving coins TO bag - deduct from wallet
-                                  let remaining = diff;
-                                  // Deduct from copper first (least valuable)
-                                  const cpToDeduct = Math.min(newWallet.copper || 0, Math.floor(remaining * 100));
-                                  newWallet.copper = (newWallet.copper || 0) - cpToDeduct;
-                                  remaining -= cpToDeduct * 0.01;
+                                const newWallet = { ...walletRounded };
+                                const newContainerCoins = { ...containerCoins };
+                                
+                                // Order for moving TO bag (least valuable first): CP, SP, GP, EP, PP
+                                // Order for moving FROM bag (most valuable first): PP, EP, GP, SP, CP
+                                const coinOrder = diff > 0 
+                                  ? ['copper', 'silver', 'gold', 'electrum', 'platinum']
+                                  : ['platinum', 'electrum', 'gold', 'silver', 'copper'];
+                                
+                                let remaining = Math.abs(diff);
+                                
+                                for (const coinKey of coinOrder) {
+                                  if (!moveCoinsSelection[coinKey] || remaining <= 0) continue;
                                   
-                                  const spToDeduct = Math.min(newWallet.silver || 0, Math.floor(remaining * 10));
-                                  newWallet.silver = (newWallet.silver || 0) - spToDeduct;
-                                  remaining -= spToDeduct * 0.1;
-                                  
-                                  const epToDeduct = Math.min(newWallet.electrum || 0, Math.floor(remaining / 5));
-                                  newWallet.electrum = (newWallet.electrum || 0) - epToDeduct;
-                                  remaining -= epToDeduct * 5;
-                                  
-                                  const gpToDeduct = Math.min(newWallet.gold || 0, Math.floor(remaining));
-                                  newWallet.gold = (newWallet.gold || 0) - gpToDeduct;
-                                  remaining -= gpToDeduct;
-                                  
-                                  const ppToDeduct = Math.min(newWallet.platinum || 0, Math.ceil(remaining / 10));
-                                  newWallet.platinum = (newWallet.platinum || 0) - ppToDeduct;
-                                } else if (diff < 0) {
-                                  // Moving coins FROM bag - add to wallet as gold
-                                  newWallet.gold = (newWallet.gold || 0) + Math.abs(diff);
+                                  if (diff > 0) {
+                                    // Moving TO bag
+                                    const available = newWallet[coinKey] || 0;
+                                    const toMove = Math.min(remaining, available);
+                                    newWallet[coinKey] = available - toMove;
+                                    newContainerCoins[coinKey] = (newContainerCoins[coinKey] || 0) + toMove;
+                                    remaining -= toMove;
+                                  } else {
+                                    // Moving FROM bag
+                                    const available = newContainerCoins[coinKey] || 0;
+                                    const toMove = Math.min(remaining, available);
+                                    newContainerCoins[coinKey] = available - toMove;
+                                    newWallet[coinKey] = (newWallet[coinKey] || 0) + toMove;
+                                    remaining -= toMove;
+                                  }
                                 }
                                 
-                                // Recalculate moneyGP
-                                const newMoneyGP = ((newWallet.platinum || 0) * 10) + ((newWallet.electrum || 0) * 5) + (newWallet.gold || 0) + ((newWallet.silver || 0) * 0.1) + ((newWallet.copper || 0) * 0.01);
+                                const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + 
+                                                  (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                                 
                                 updateChar({
                                   wallet: newWallet,
                                   moneyGP: Math.round(newMoneyGP * 100) / 100,
                                   inventory: char.inventory.map(i => 
-                                    i.id === selectedContainerId ? { ...i, storedCoinsGP: newCoinsInBag } : i
+                                    i.id === selectedContainerId ? { ...i, storedCoins: newContainerCoins, storedCoinsGP: undefined } : i
                                   )
                                 });
                               }}
@@ -9644,20 +10388,34 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             />
                             
                             <div className="flex justify-between text-xs">
-                              <span className="text-gray-500">0 GP in bag</span>
-                              <span className="text-yellow-400 font-semibold">{currentCoinsInBag.toFixed(2)} GP</span>
-                              <span className="text-gray-500">{sliderMax.toFixed(2)} GP max</span>
+                              <span className="text-gray-500">0 in bag</span>
+                              <span className="text-yellow-400 font-semibold">{selectedContainerTotal} coins in bag</span>
+                              <span className="text-gray-500">{sliderMax} max</span>
                             </div>
                             
-                            <div className="text-xs text-gray-500 mt-1">
-                              Weight in bag: {(currentCoinsInBag / 16).toFixed(2)} lb
+                            {/* Detailed breakdown */}
+                            <div className="text-xs text-gray-400 pt-2 border-t border-gray-700">
+                              <div className="font-semibold mb-1">In {selectedContainer.name}:</div>
+                              <div className="flex flex-wrap gap-x-3">
+                                <span className="text-orange-400">{containerCoins.copper} CP</span>
+                                <span className="text-gray-400">{containerCoins.silver} SP</span>
+                                <span className="text-yellow-400">{containerCoins.gold} GP</span>
+                                <span className="text-blue-300">{containerCoins.electrum} EP</span>
+                                <span className="text-gray-300">{containerCoins.platinum} PP</span>
+                              </div>
+                              <div className="mt-1">
+                                Value: {containerGPValue.toFixed(2)} GP • Weight: {(currentCoinCount / 16).toFixed(2)} lb (not counted)
+                              </div>
+                              {maxWeight !== Infinity && (
+                                <div className="mt-1">Capacity: {currentCoinCount}/{maxCoinsByWeight} coins by weight</div>
+                              )}
                             </div>
                           </div>
                         )}
                         
-                        {totalStoredCoins > 0 && (
+                        {totalStoredCoinCount > 0 && (
                           <div className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-700">
-                            Total in all bags: {totalStoredCoins.toFixed(2)} GP ({(totalStoredCoins / 16).toFixed(2)} lb) — not counted in your weight/EV
+                            Total in all bags: {totalStoredCoinCount.toLocaleString()} coins ({(totalStoredCoinCount / 16).toFixed(2)} lb saved)
                           </div>
                         )}
                       </div>
@@ -9667,14 +10425,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   {/* Add/Spend Section */}
                   <div className="border-t border-gray-700 pt-4">
                     <div className="text-sm text-gray-400 mb-2">Add or Spend Coins</div>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                    <div className="grid grid-cols-5 gap-2 mb-3">
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">PP</label>
+                        <label className="block text-xs text-gray-500 mb-1">CP</label>
                         <input
                           type="number"
                           min={0}
-                          value={walletForm.pp || ''}
-                          onChange={(e) => updateWalletForm({ pp: parseInt(e.target.value) || 0 })}
+                          value={walletForm.cp || ''}
+                          onChange={(e) => updateWalletForm({ cp: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">SP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.sp || ''}
+                          onChange={(e) => updateWalletForm({ sp: parseInt(e.target.value) || 0 })}
                           className="w-full p-2 bg-gray-700 rounded text-white text-center"
                           placeholder="0"
                         />
@@ -9702,23 +10471,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">SP</label>
+                        <label className="block text-xs text-gray-500 mb-1">PP</label>
                         <input
                           type="number"
                           min={0}
-                          value={walletForm.sp || ''}
-                          onChange={(e) => updateWalletForm({ sp: parseInt(e.target.value) || 0 })}
-                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">CP</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={walletForm.cp || ''}
-                          onChange={(e) => updateWalletForm({ cp: parseInt(e.target.value) || 0 })}
+                          value={walletForm.pp || ''}
+                          onChange={(e) => updateWalletForm({ pp: parseInt(e.target.value) || 0 })}
                           className="w-full p-2 bg-gray-700 rounded text-white text-center"
                           placeholder="0"
                         />
@@ -9759,30 +10517,115 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           const spendSP = walletForm.sp || 0;
                           const spendCP = walletForm.cp || 0;
                           
-                          // Check if we have enough of each denomination
-                          if (spendPP > (wallet.platinum || 0) || 
-                              spendGP > (wallet.gold || 0) || 
-                              spendEP > (wallet.electrum || 0) ||
-                              spendSP > (wallet.silver || 0) || 
-                              spendCP > (wallet.copper || 0)) {
-                            showToast('Not enough coins of that denomination!', 'error');
+                          // Calculate total cost in copper (smallest unit) for precision
+                          const costInCopper = (spendPP * 1000) + (spendEP * 500) + (spendGP * 100) + (spendSP * 10) + spendCP;
+                          
+                          // Calculate total wallet value in copper
+                          const walletInCopper = ((wallet.platinum || 0) * 1000) + ((wallet.electrum || 0) * 500) + 
+                                                ((wallet.gold || 0) * 100) + ((wallet.silver || 0) * 10) + (wallet.copper || 0);
+                          
+                          if (costInCopper > walletInCopper) {
+                            showToast('Not enough money!', 'error');
                             return;
                           }
                           
-                          const newWallet = {
-                            platinum: (wallet.platinum || 0) - spendPP,
-                            gold: (wallet.gold || 0) - spendGP,
-                            electrum: (wallet.electrum || 0) - spendEP,
-                            silver: (wallet.silver || 0) - spendSP,
-                            copper: (wallet.copper || 0) - spendCP
-                          };
+                          if (costInCopper === 0) {
+                            return;
+                          }
+                          
+                          // Start with current wallet and deduct, giving change as needed
+                          let newWallet = { ...wallet };
+                          let remainingCost = costInCopper;
+                          
+                          // Try to pay with exact coins first, then break larger coins
+                          // Pay with copper
+                          const cpToPay = Math.min(newWallet.copper || 0, Math.ceil(remainingCost));
+                          newWallet.copper = (newWallet.copper || 0) - cpToPay;
+                          remainingCost -= cpToPay;
+                          
+                          // Pay with silver (1 SP = 10 CP)
+                          if (remainingCost > 0) {
+                            const spNeeded = Math.ceil(remainingCost / 10);
+                            const spToPay = Math.min(newWallet.silver || 0, spNeeded);
+                            newWallet.silver = (newWallet.silver || 0) - spToPay;
+                            const spValue = spToPay * 10;
+                            if (spValue > remainingCost) {
+                              // Give change in copper
+                              newWallet.copper = (newWallet.copper || 0) + (spValue - remainingCost);
+                              remainingCost = 0;
+                            } else {
+                              remainingCost -= spValue;
+                            }
+                          }
+                          
+                          // Pay with gold (1 GP = 100 CP)
+                          if (remainingCost > 0) {
+                            const gpNeeded = Math.ceil(remainingCost / 100);
+                            const gpToPay = Math.min(newWallet.gold || 0, gpNeeded);
+                            newWallet.gold = (newWallet.gold || 0) - gpToPay;
+                            const gpValue = gpToPay * 100;
+                            if (gpValue > remainingCost) {
+                              // Give change - prefer silver over copper
+                              let change = gpValue - remainingCost;
+                              const changeInSP = Math.floor(change / 10);
+                              newWallet.silver = (newWallet.silver || 0) + changeInSP;
+                              change -= changeInSP * 10;
+                              newWallet.copper = (newWallet.copper || 0) + change;
+                              remainingCost = 0;
+                            } else {
+                              remainingCost -= gpValue;
+                            }
+                          }
+                          
+                          // Pay with electrum (1 EP = 500 CP = 5 GP)
+                          if (remainingCost > 0) {
+                            const epNeeded = Math.ceil(remainingCost / 500);
+                            const epToPay = Math.min(newWallet.electrum || 0, epNeeded);
+                            newWallet.electrum = (newWallet.electrum || 0) - epToPay;
+                            const epValue = epToPay * 500;
+                            if (epValue > remainingCost) {
+                              // Give change - prefer gold, then silver, then copper
+                              let change = epValue - remainingCost;
+                              const changeInGP = Math.floor(change / 100);
+                              newWallet.gold = (newWallet.gold || 0) + changeInGP;
+                              change -= changeInGP * 100;
+                              const changeInSP = Math.floor(change / 10);
+                              newWallet.silver = (newWallet.silver || 0) + changeInSP;
+                              change -= changeInSP * 10;
+                              newWallet.copper = (newWallet.copper || 0) + change;
+                              remainingCost = 0;
+                            } else {
+                              remainingCost -= epValue;
+                            }
+                          }
+                          
+                          // Pay with platinum (1 PP = 1000 CP = 10 GP)
+                          if (remainingCost > 0) {
+                            const ppNeeded = Math.ceil(remainingCost / 1000);
+                            const ppToPay = Math.min(newWallet.platinum || 0, ppNeeded);
+                            newWallet.platinum = (newWallet.platinum || 0) - ppToPay;
+                            const ppValue = ppToPay * 1000;
+                            if (ppValue > remainingCost) {
+                              // Give change - prefer gold, then silver, then copper
+                              let change = ppValue - remainingCost;
+                              const changeInGP = Math.floor(change / 100);
+                              newWallet.gold = (newWallet.gold || 0) + changeInGP;
+                              change -= changeInGP * 100;
+                              const changeInSP = Math.floor(change / 10);
+                              newWallet.silver = (newWallet.silver || 0) + changeInSP;
+                              change -= changeInSP * 10;
+                              newWallet.copper = (newWallet.copper || 0) + change;
+                              remainingCost = 0;
+                            } else {
+                              remainingCost -= ppValue;
+                            }
+                          }
+                          
                           const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                           
-                          const spentGP = (spendPP * 10) + (spendEP * 5) + spendGP + (spendSP * 0.1) + (spendCP * 0.01);
-                          if (spentGP > 0) {
-                            updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
-                            showToast(`Spent ${spentGP.toFixed(2)} GP worth`, 'success');
-                          }
+                          const spentGP = costInCopper / 100;
+                          updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
+                          showToast(`Spent ${spentGP.toFixed(2)} GP worth`, 'success');
                           resetWalletForm();
                         }}
                         className="py-3 bg-red-600 rounded hover:bg-red-700 font-semibold"
@@ -9830,8 +10673,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <input
                         type="text"
                         inputMode="numeric"
-                        value={itemForm.quantity === 1 ? '' : itemForm.quantity}
-                        onChange={(e) => updateItemForm({ quantity: e.target.value === '' ? 1 : (parseInt(e.target.value) || 1) })}
+                        value={itemForm.quantity}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // Allow empty or any positive integer digits
+                          if (val === '' || /^\d+$/.test(val)) {
+                            updateItemForm({ quantity: val });
+                          }
+                        }}
                         placeholder="1"
                         className="w-full p-2 bg-gray-700 rounded text-white"
                       />
@@ -9996,6 +10845,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         <label className="flex items-center gap-2 text-sm text-gray-200">
                           <input
                             type="checkbox"
+                            checked={itemIsGem}
+                            onChange={(e) => setItemIsGem(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Gem
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
                             checked={itemIsContainer}
                             onChange={(e) => setItemIsContainer(e.target.checked)}
                             className="w-4 h-4"
@@ -10061,7 +10920,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       id: 0, 
                       ev: parseFloat(itemForm.ev) || 0, 
                       weightPer: parseFloat(itemForm.weightPer) || 0,
-                      quantity: itemForm.quantity || 1
+                      quantity: parseInt(itemForm.quantity) || 1
                     };
                     const availableContainers = getAvailableContainers(currentItem as InventoryItem);
                     const currentContainer = (char?.inventory || []).find(c => c.id === itemStoredInId);
@@ -10080,7 +10939,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <option key={c.id} value={c.id}>
                               {c.name} {c.isMagical 
                                 ? `(${c.info.totalWeight.toFixed(1)}/${c.info.maxWeight || '∞'} lbs)`
-                                : `(${c.info.itemCount}/${c.info.capacity} items)`
+                                : `(${c.info.slotCount}/${c.info.capacity} slots)`
                               }
                             </option>
                           ))}
@@ -10212,6 +11071,77 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             ))}
                           </select>
                         </div>
+                      </div>
+                      
+                      {/* Extra Damage Dice (e.g., on failed save) */}
+                      <div className="mb-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm text-gray-400">Extra Damage Dice</label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setItemWeaponExtraDice([...itemWeaponExtraDice, { numDice: 1, dieType: 4, label: 'On failed save' }]);
+                            }}
+                            className="px-2 py-1 text-xs bg-green-600 rounded hover:bg-green-700"
+                          >
+                            + Add Extra Dice
+                          </button>
+                        </div>
+                        <div className="text-xs text-gray-500 mb-2">For conditional damage (e.g., poison on failed save)</div>
+                        
+                        {itemWeaponExtraDice.length > 0 && (
+                          <div className="space-y-2">
+                            {itemWeaponExtraDice.map((extra, idx) => (
+                              <div key={idx} className="flex items-center gap-2 bg-gray-800 p-2 rounded">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={extra.numDice}
+                                  onChange={(e) => {
+                                    const updated = [...itemWeaponExtraDice];
+                                    updated[idx] = { ...updated[idx], numDice: parseInt(e.target.value) || 1 };
+                                    setItemWeaponExtraDice(updated);
+                                  }}
+                                  className="w-12 p-1 bg-gray-700 rounded text-white text-center text-sm"
+                                  placeholder="1"
+                                />
+                                <select
+                                  value={extra.dieType}
+                                  onChange={(e) => {
+                                    const updated = [...itemWeaponExtraDice];
+                                    updated[idx] = { ...updated[idx], dieType: parseInt(e.target.value) || 4 };
+                                    setItemWeaponExtraDice(updated);
+                                  }}
+                                  className="w-16 p-1 bg-gray-700 rounded text-white text-sm"
+                                >
+                                  {[2,3,4,6,8,10,12].map((d) => (
+                                    <option key={d} value={d}>d{d}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={extra.label || ''}
+                                  onChange={(e) => {
+                                    const updated = [...itemWeaponExtraDice];
+                                    updated[idx] = { ...updated[idx], label: e.target.value };
+                                    setItemWeaponExtraDice(updated);
+                                  }}
+                                  className="flex-1 p-1 bg-gray-700 rounded text-white text-sm"
+                                  placeholder="Label (e.g., On failed save)"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setItemWeaponExtraDice(itemWeaponExtraDice.filter((_, i) => i !== idx));
+                                  }}
+                                  className="p-1 bg-red-600 rounded hover:bg-red-700"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <label className="block text-sm text-gray-400 mb-1">Weapon Modes</label>
@@ -10538,7 +11468,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         id: editModal.item?.id || Date.now(),
                         name: itemForm.name,
                         description: itemForm.description,
-                        quantity: itemForm.quantity,
+                        quantity: parseInt(itemForm.quantity) || 1,  // Parse string to number, default 1
                         weightPer: parseFloat(itemForm.weightPer) || 0,
                         ev: parseFloat(itemForm.ev) || 0,
                         worthAmount: itemForm.worth || null,
@@ -10549,12 +11479,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         isWeapon: !!itemIsWeapon,
                         isAmmo: !!itemIsAmmo,
                         isPotion: !!itemIsPotion,
+                        isGem: !!itemIsGem,
                         // Container fields
                         isContainer: !!itemIsContainer,
                         containerCapacity: itemIsContainer && !itemIsMagicalContainer ? (Number(itemContainerCapacity) || 0) : 0,
                         isMagicalContainer: itemIsContainer ? !!itemIsMagicalContainer : false,
                         containerMaxWeight: itemIsContainer && itemIsMagicalContainer ? (Number(itemContainerMaxWeight) || 0) : 0,
-                        storedInId: !itemIsContainer ? (itemStoredInId || null) : null,
+                        storedInId: null as number | null,  // Will be set below after capacity check
                         weaponType: itemIsWeapon ? ((itemWeaponRanged && !itemWeaponMelee) ? 'ranged' : 'melee') : undefined,
                         weaponMelee: itemIsWeapon ? !!itemWeaponMelee : false,
                         weaponRanged: itemIsWeapon ? !!itemWeaponRanged : false,
@@ -10564,6 +11495,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         weaponDamageMisc: itemIsWeapon ? (Number(itemWeaponDamageMisc) || 0) : 0,
                         weaponDamageNumDice: itemIsWeapon ? (Number(itemWeaponDamageNumDice) || 1) : 1,
                         weaponDamageDieType: itemIsWeapon ? (Number(itemWeaponDamageDieType) || 8) : 8,
+                        weaponExtraDice: itemIsWeapon ? (Array.isArray(itemWeaponExtraDice) ? itemWeaponExtraDice : []) : [],
                         acBonus: (itemIsArmor || itemIsShield) ? itemForm.acBonus : 0,
                         magicACBonus: (itemIsArmor || itemIsShield) ? itemForm.magicACBonus : 0,
                         hasAttrBonus: !!itemHasAttrBonus && (Array.isArray(itemStatBonuses) ? itemStatBonuses.length > 0 : false),
@@ -10577,10 +11509,102 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         magicCastingCapacity: (itemIsMagicCasting && !itemIsGrimoire) ? (Number(itemMagicCastingCapacity) || 0) : 0
                       };
                       
+                      // Handle container capacity enforcement
+                      let splitItem = null;
+                      if (!itemIsContainer && itemStoredInId) {
+                        const targetContainer = char.inventory.find(c => c.id === itemStoredInId);
+                        if (targetContainer && targetContainer.isContainer && !targetContainer.isMagicalContainer) {
+                          const capacity = Number(targetContainer.containerCapacity) || 0;
+                          if (capacity > 0) {
+                            // Get container info (excluding this item if editing)
+                            const otherItems = (char.inventory || []).filter(it => 
+                              it.storedInId === itemStoredInId && it.id !== newItem.id
+                            );
+                            
+                            // Calculate current slots used by other items
+                            let otherNormalSlots = 0;
+                            let otherZeroEVCount = 0;
+                            otherItems.forEach(it => {
+                              const qty = Number(it.quantity) || 1;
+                              const ev = Number(it.ev) || 0;
+                              if (ev > 0) {
+                                otherNormalSlots += qty;
+                              } else {
+                                otherZeroEVCount += qty;
+                              }
+                            });
+                            const otherZeroEVSlots = Math.ceil(otherZeroEVCount / 10);
+                            const currentSlots = otherNormalSlots + otherZeroEVSlots;
+                            const slotsAvailable = Math.max(0, capacity - currentSlots);
+                            
+                            const newItemEV = Number(newItem.ev) || 0;
+                            const newItemQty = Number(newItem.quantity) || 1;
+                            
+                            if (newItemEV > 0) {
+                              // Normal item: each takes 1 slot
+                              if (newItemQty > slotsAvailable) {
+                                if (slotsAvailable > 0) {
+                                  // Split: put slotsAvailable in container, rest stays out
+                                  splitItem = { ...newItem, id: Date.now(), quantity: newItemQty - slotsAvailable, storedInId: null };
+                                  newItem.quantity = slotsAvailable;
+                                  newItem.storedInId = itemStoredInId;
+                                } else {
+                                  // No room at all
+                                  showToast(`Container is full (${currentSlots}/${capacity} slots)`, 'warning');
+                                  newItem.storedInId = null;
+                                }
+                              } else {
+                                newItem.storedInId = itemStoredInId;
+                              }
+                            } else {
+                              // Zero-EV item: 10 = 1 slot
+                              const maxZeroEVSlots = slotsAvailable;
+                              const maxZeroEVItems = maxZeroEVSlots * 10 + (10 - (otherZeroEVCount % 10)) % 10;
+                              
+                              if (newItemQty > maxZeroEVItems && maxZeroEVItems > 0) {
+                                // Split
+                                splitItem = { ...newItem, id: Date.now(), quantity: newItemQty - maxZeroEVItems, storedInId: null };
+                                newItem.quantity = maxZeroEVItems;
+                                newItem.storedInId = itemStoredInId;
+                              } else if (maxZeroEVItems === 0) {
+                                showToast(`Container is full (${currentSlots}/${capacity} slots)`, 'warning');
+                                newItem.storedInId = null;
+                              } else {
+                                newItem.storedInId = itemStoredInId;
+                              }
+                            }
+                          } else {
+                            newItem.storedInId = itemStoredInId;
+                          }
+                        } else if (targetContainer && targetContainer.isMagicalContainer) {
+                          // Magical container: check weight
+                          const maxWeight = Number(targetContainer.containerMaxWeight) || Infinity;
+                          const info = getContainerInfo(itemStoredInId);
+                          const itemWeight = (Number(newItem.weightPer) || 0) * (Number(newItem.quantity) || 1);
+                          const weightUsedByOthers = info.totalWeight - ((editModal.item?.storedInId === itemStoredInId) 
+                            ? (Number(editModal.item.weightPer) || 0) * (Number(editModal.item.quantity) || 1) : 0);
+                          
+                          if (weightUsedByOthers + itemWeight <= maxWeight) {
+                            newItem.storedInId = itemStoredInId;
+                          } else {
+                            showToast(`Container weight limit exceeded`, 'warning');
+                            newItem.storedInId = null;
+                          }
+                        } else {
+                          newItem.storedInId = itemStoredInId;
+                        }
+                      }
+                      
                       // If this item was a container and is being deleted/changed, clear storedInId from items inside
                       let newInv = editModal.type === 'newItem' ? 
                         [...char.inventory, newItem] :
                         char.inventory.map(i => i.id === newItem.id ? newItem : i);
+                      
+                      // Add split item if we had to split
+                      if (splitItem) {
+                        newInv = [...newInv, splitItem];
+                        showToast(`Split: ${newItem.quantity} in container, ${splitItem.quantity} outside`, 'info');
+                      }
                       
                       // If container was removed, clear items that were stored in it
                       if (editModal.type === 'editItem' && editModal.item?.isContainer && !newItem.isContainer) {
@@ -10632,8 +11656,24 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         
                         // If deleting a magical container with coins, return coins to wallet
                         let newMoneyGP = char.moneyGP;
-                        if (deletedItem.isContainer && deletedItem.isMagicalContainer && deletedItem.storedCoinsGP) {
-                          newMoneyGP = char.moneyGP + (Number(deletedItem.storedCoinsGP) || 0);
+                        let newWallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                        if (deletedItem.isContainer && deletedItem.isMagicalContainer) {
+                          if (deletedItem.storedCoins) {
+                            // Return individual coins
+                            newWallet = {
+                              platinum: (newWallet.platinum || 0) + (deletedItem.storedCoins.platinum || 0),
+                              gold: (newWallet.gold || 0) + (deletedItem.storedCoins.gold || 0),
+                              electrum: (newWallet.electrum || 0) + (deletedItem.storedCoins.electrum || 0),
+                              silver: (newWallet.silver || 0) + (deletedItem.storedCoins.silver || 0),
+                              copper: (newWallet.copper || 0) + (deletedItem.storedCoins.copper || 0)
+                            };
+                            newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + 
+                                        (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
+                          } else if (deletedItem.storedCoinsGP) {
+                            // Legacy: return as gold
+                            newWallet = { ...newWallet, gold: (newWallet.gold || 0) + Math.floor(Number(deletedItem.storedCoinsGP) || 0) };
+                            newMoneyGP = char.moneyGP + (Number(deletedItem.storedCoinsGP) || 0);
+                          }
                         }
                         
                         const miFiltered = (char.magicItems || []).filter(mi => String(mi.linkedInventoryItemId) !== String(deletedItem.id) && String(mi.id) !== `linked-${String(deletedItem.id)}`);
@@ -10642,7 +11682,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         const speedFiltered = (char.equippedSpeedItemIds && Array.isArray(char.equippedSpeedItemIds))
                           ? char.equippedSpeedItemIds.filter(x => String(x) !== String(deletedItem.id))
                           : [];
-                        updateChar({ inventory: invFiltered, magicItems: miFiltered, grimoires: grimFiltered, equippedSpeedItemIds: speedFiltered, moneyGP: newMoneyGP });
+                        updateChar({ inventory: invFiltered, magicItems: miFiltered, grimoires: grimFiltered, equippedSpeedItemIds: speedFiltered, moneyGP: newMoneyGP, wallet: newWallet });
                         setEditModal(null);
                       }}
                       className="w-full py-2 bg-red-600 rounded hover:bg-red-700 mt-2"
@@ -10880,8 +11920,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             
                             // If selling a magical container with coins, return coins to wallet
                             let coinsReturned = 0;
-                            if (itemDeleted && sellItem.isContainer && sellItem.isMagicalContainer && sellItem.storedCoinsGP) {
-                              coinsReturned = Number(sellItem.storedCoinsGP) || 0;
+                            let newWallet = char.wallet || { platinum: 0, gold: 0, electrum: 0, silver: 0, copper: 0 };
+                            if (itemDeleted && sellItem.isContainer && sellItem.isMagicalContainer) {
+                              if (sellItem.storedCoins) {
+                                // Return individual coins
+                                newWallet = {
+                                  platinum: (newWallet.platinum || 0) + (sellItem.storedCoins.platinum || 0),
+                                  gold: (newWallet.gold || 0) + (sellItem.storedCoins.gold || 0),
+                                  electrum: (newWallet.electrum || 0) + (sellItem.storedCoins.electrum || 0),
+                                  silver: (newWallet.silver || 0) + (sellItem.storedCoins.silver || 0),
+                                  copper: (newWallet.copper || 0) + (sellItem.storedCoins.copper || 0)
+                                };
+                                coinsReturned = (sellItem.storedCoins.platinum * 10) + (sellItem.storedCoins.electrum * 5) + 
+                                               sellItem.storedCoins.gold + (sellItem.storedCoins.silver * 0.1) + 
+                                               (sellItem.storedCoins.copper * 0.01);
+                              } else if (sellItem.storedCoinsGP) {
+                                // Legacy: return as gold
+                                newWallet = { ...newWallet, gold: (newWallet.gold || 0) + Math.floor(Number(sellItem.storedCoinsGP) || 0) };
+                                coinsReturned = Number(sellItem.storedCoinsGP) || 0;
+                              }
                             }
 
                             const updated = nextInv.find(i => String(i.id) === String(sellItem.id));
@@ -10895,7 +11952,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             updateChar({
                               inventory: nextInv,
                               magicItems: nextMagicItems,
-                              moneyGP: (Number(char.moneyGP) || 0) + worthGP + coinsReturned
+                              moneyGP: (Number(char.moneyGP) || 0) + worthGP + coinsReturned,
+                              wallet: newWallet
                             });
                             setEditModal(null);
                           }}
