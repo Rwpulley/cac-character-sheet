@@ -4015,6 +4015,10 @@ if (editModal.type === 'acTracking' && char) {
             onClick={() => {
               setCharacters([...characters, createNewCharacter()]);
               setCurrentCharIndex(characters.length);
+              // Reset attribute roller state for new character
+              setAttributeRolls([]);
+              setShowRolledAttributes(false);
+              setAttributeRollerOpen(false);
             }}
             className="w-full py-4 bg-green-600 rounded-lg text-xl font-bold mb-6 hover:bg-green-700 text-white"
           >
@@ -4030,7 +4034,13 @@ if (editModal.type === 'acTracking' && char) {
           {characters.map((c, i) => (
             <div key={c.id} className="flex items-center gap-2 mb-3">
               <button
-                onClick={() => setCurrentCharIndex(i)}
+                onClick={() => {
+                  setCurrentCharIndex(i);
+                  // Reset attribute roller state when switching characters
+                  setAttributeRolls([]);
+                  setShowRolledAttributes(false);
+                  setAttributeRollerOpen(false);
+                }}
                 className={`flex-1 p-4 ${theme.bgCard2} rounded-lg text-left ${theme.hover}`}
               >
                 <div className="text-xl font-bold">{c.name}</div>
