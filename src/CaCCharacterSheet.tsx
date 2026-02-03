@@ -2771,7 +2771,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     if (editModal.type === 'xpTable' && char) {
       // Initialize XP table form with current values
-      const defaultTable = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+      const defaultTable = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000];
       initXpTableForm(char.xpTable || defaultTable);
       // Also initialize multi-class tables
       initMultiXpTableForms(
@@ -9450,14 +9450,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           // Initialize XP tables if switching to multi-class types
                           if (classModalForm.classType === 'multi' || classModalForm.classType === 'classAndHalf') {
                             if (!char.xpTableClass1 || char.xpTableClass1.length === 0) {
-                              updates.xpTableClass1 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                              updates.xpTableClass1 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000];
                             }
                             if (!char.xpTableClass2 || char.xpTableClass2.length === 0) {
-                              updates.xpTableClass2 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                              updates.xpTableClass2 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000];
                             }
                             if (classModalForm.classType === 'multi' && classModalForm.showClass3) {
                               if (!char.xpTableClass3 || char.xpTableClass3.length === 0) {
-                                updates.xpTableClass3 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                                updates.xpTableClass3 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000];
                               }
                             }
                           }
