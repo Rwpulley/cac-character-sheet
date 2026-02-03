@@ -179,6 +179,7 @@ interface Character {
   class1Level: number;
   class2?: string;
   class2Level?: number;
+  class3?: string;  // For 3-class multiclass
   hp: number;
   maxHpBonus: number;
   hpByLevel: number[];
@@ -194,6 +195,11 @@ interface Character {
   baseBth: number;
   currentXp: number;
   xpTable: number[];
+  // Multiclass XP tables - each class has its own XP requirements
+  xpTableClass1?: number[];
+  xpTableClass2?: number[];
+  xpTableClass3?: number[];
+  classType?: 'single' | 'multi' | 'classAndHalf';  // Type of class setup
   primeSaveBonus: number;
   attackBonus: number;
   damageBonus: number;
@@ -1172,6 +1178,16 @@ function CaCCharacterSheetInner() {
   const [countersExpanded, setCountersExpanded] = useState(true);
   const [diceRollerExpanded, setDiceRollerExpanded] = useState(true);
   
+  // Class modal state - tracks step in class setup wizard
+  const [classModalStep, setClassModalStep] = useState<'choose' | 'setup'>('setup');
+  const [classModalForm, setClassModalForm] = useState({
+    classType: 'single' as 'single' | 'multi' | 'classAndHalf',
+    class1: '',
+    class2: '',
+    class3: '',
+    showClass3: false
+  });
+  
   // Attribute roller state
   const [attributeRollerOpen, setAttributeRollerOpen] = useState(false);
   const [attributeRolls, setAttributeRolls] = useState([]); // Array of 6 rolls
@@ -1579,8 +1595,8 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [walletForm, setWalletForm] = useState({
     cp: 0, sp: 0, ep: 0, gp: 0, pp: 0,
     selectedCoinContainer: null as number | null,
-    // Checkboxes for which coins to move to/from container
-    moveCoins: { copper: true, silver: true, gold: true, electrum: true, platinum: true } as Record<string, boolean>
+    // Checkboxes for which coins to move to/from container (default unchecked)
+    moveCoins: { copper: false, silver: false, gold: false, electrum: false, platinum: false } as Record<string, boolean>
   });
   
   const updateWalletForm = useCallback((updates) => {
@@ -1747,6 +1763,17 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       next[index] = value;
       return next;
     });
+  }, []);
+  
+  // Multi-class XP table form states
+  const [xpTableClass1Form, setXpTableClass1Form] = useState<number[]>([]);
+  const [xpTableClass2Form, setXpTableClass2Form] = useState<number[]>([]);
+  const [xpTableClass3Form, setXpTableClass3Form] = useState<number[]>([]);
+  
+  const initMultiXpTableForms = useCallback((class1: number[], class2: number[], class3?: number[]) => {
+    setXpTableClass1Form([...class1]);
+    setXpTableClass2Form([...class2]);
+    if (class3) setXpTableClass3Form([...class3]);
   }, []);
   
   // Spell Slots form state
@@ -2702,6 +2729,16 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     if (editModal.type === 'class' && char) {
       updateModalForm({ class: char.class1 || '' });
+      // Initialize class modal form
+      const hasClassType = char.classType && char.classType !== 'single';
+      setClassModalStep(char.classType ? 'setup' : 'choose');
+      setClassModalForm({
+        classType: char.classType || 'single',
+        class1: char.class1 || '',
+        class2: char.class2 || '',
+        class3: char.class3 || '',
+        showClass3: !!(char.class3)
+      });
     }
     if (editModal.type === 'speed' && char) {
       updateModalForm({ 
@@ -2734,7 +2771,14 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     if (editModal.type === 'xpTable' && char) {
       // Initialize XP table form with current values
-      initXpTableForm(char.xpTable || [0, 0, 500, 1001, 2001, 4001, 8001, 16001, 32001, 64001, 128001, 256001, 512001]);
+      const defaultTable = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+      initXpTableForm(char.xpTable || defaultTable);
+      // Also initialize multi-class tables
+      initMultiXpTableForms(
+        char.xpTableClass1 || defaultTable,
+        char.xpTableClass2 || defaultTable,
+        char.xpTableClass3 || defaultTable
+      );
     }
     if (editModal.type === 'spellSlots' && char) {
       // Initialize spell slots form with current values
@@ -4128,6 +4172,25 @@ if (editModal.type === 'acTracking' && char) {
               </p>
 
               <div>
+                <div className={`font-bold ${theme.text} mb-2`}>Getting Started:</div>
+                <p className={theme.textMuted2}>
+                  Using the Player's Handbook or Adventurer's Backpack, enter the XP needed for each level in "Level XP". As you gain XP throughout the campaign, the app will track your progress automatically.
+                </p>
+              </div>
+
+              <div>
+                <div className={`font-bold ${theme.text} mb-2`}>Class Types:</div>
+                <p className={`${theme.textMuted2} mb-2`}>
+                  Click "Edit Class" on the Main tab to choose your class configuration:
+                </p>
+                <ul className={`list-disc list-inside space-y-2 ${theme.textMuted2}`}>
+                  <li><span className="text-blue-400 font-semibold">Single Class:</span> One class with standard XP progression. Enter your class's XP requirements in Level XP.</li>
+                  <li><span className="text-green-400 font-semibold">Multi-Class:</span> 2-3 classes that level together. Enter each class's XP requirements separately - the app combines them plus the multi-class bonus (+200 XP/level for 2 classes, +300 XP/level for 3 classes).</li>
+                  <li><span className="text-purple-400 font-semibold">Class and a Half:</span> Primary class at full XP, supporting class at half speed. The supporting class XP is split across 2 primary levels (first half at levels 2,4,6... second half at 3,5,7...).</li>
+                </ul>
+              </div>
+
+              <div>
                 <div className={`font-bold ${theme.text} mb-2`}>Features:</div>
                 <ul className={`list-disc list-inside space-y-1 ${theme.textMuted2}`}>
                   <li>Roll attributes using your preferred method (3d6, 4d6 drop lowest, or best of 6)</li>
@@ -4136,6 +4199,7 @@ if (editModal.type === 'acTracking' && char) {
                   <li>Track your experience and see when you reach your next level</li>
                   <li>Track AC based on Race abilities, Armor, and Shield modifiers</li>
                   <li>Track your inventory including weight and encumbrance</li>
+                  <li>Store items and coins in containers (bags, pouches, etc.)</li>
                   <li>Add inventory items that give Attribute, Speed, HP, and AC bonuses, as well as items that give bonuses to weapons</li>
                   <li>Perform money exchange using Gold as your base currency</li>
                   <li>Track ammo usage when used with a ranged weapon</li>
@@ -4144,6 +4208,7 @@ if (editModal.type === 'acTracking' && char) {
                   <li>Track your magical inventory and daily spell uses</li>
                   <li>Track Checks and Saves with appropriate modifiers, including +6 for Prime Attributes</li>
                   <li>Track companions including their details, attacks, and HP</li>
+                  <li>Use counters to track limited-use abilities (stuns, rages, etc.)</li>
                   <li>Use a multitude of dice to roll for whatever you may need</li>
                   <li>Notes section with date and time to track your group's progress</li>
                 </ul>
@@ -4235,11 +4300,38 @@ if (editModal.type === 'acTracking' && char) {
                 <label className="block text-sm text-gray-400">Class & Level</label>
                 <div className="flex items-center gap-2">
                   <div className="text-lg">
-                    {char.class1} {currentLevel}
-                    {memoizedLevelInfo.drainedLevels > 0 && (
-                      <span className="text-red-400 text-sm ml-1">(Eff: {memoizedLevelInfo.effectiveLevel})</span>
+                    {/* Single class or no class type set */}
+                    {(!char.classType || char.classType === 'single') && (
+                      <>
+                        {char.class1} {currentLevel}
+                        {memoizedLevelInfo.drainedLevels > 0 && (
+                          <span className="text-red-400 text-sm ml-1">(Eff: {memoizedLevelInfo.effectiveLevel})</span>
+                        )}
+                        {/* Legacy class2 display for non-typed characters */}
+                        {!char.classType && char.class2 && <div>{char.class2} {char.class2Level}</div>}
+                      </>
                     )}
-                    {char.class2 && <div>{char.class2} {char.class2Level}</div>}
+                    {/* Multi-class: show each class on its own line with level */}
+                    {char.classType === 'multi' && (
+                      <div className="space-y-0.5">
+                        <div>{char.class1} {currentLevel}</div>
+                        {char.class2 && <div>{char.class2} {currentLevel}</div>}
+                        {char.class3 && <div>{char.class3} {currentLevel}</div>}
+                        {memoizedLevelInfo.drainedLevels > 0 && (
+                          <span className="text-red-400 text-sm">(Eff: {memoizedLevelInfo.effectiveLevel})</span>
+                        )}
+                      </div>
+                    )}
+                    {/* Class and a half: primary at current level, supporting at half */}
+                    {char.classType === 'classAndHalf' && (
+                      <div className="space-y-0.5">
+                        <div>{char.class1} {currentLevel}</div>
+                        {char.class2 && <div>{char.class2} {Math.floor(currentLevel / 2)}</div>}
+                        {memoizedLevelInfo.drainedLevels > 0 && (
+                          <span className="text-red-400 text-sm">(Eff: {memoizedLevelInfo.effectiveLevel})</span>
+                        )}
+                      </div>
+                    )}
                     {canLevelUp && <span className="text-green-400 ml-2">⬆ LEVEL UP!</span>}
                   </div>
                   <button onClick={openClassModal} className="p-2 bg-gray-700 rounded hover:bg-gray-600">
@@ -8938,6 +9030,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   </p>
                   
                   <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Class & Level</h4>
+                    <p className="text-sm text-gray-300 mb-2">
+                      Click Edit Class to choose your class configuration:
+                    </p>
+                    <ul className="text-sm text-gray-300 space-y-2 ml-4 list-disc">
+                      <li><span className="font-semibold text-white">Single Class:</span> One class with standard XP progression.</li>
+                      <li><span className="font-semibold text-white">Multi-Class:</span> 2-3 classes that level together. XP requirements are combined plus a multi-class bonus (+200 XP per level for 2 classes, +300 XP per level for 3 classes).</li>
+                      <li><span className="font-semibold text-white">Class and a Half:</span> Primary class at full XP progression, supporting class at half speed. The supporting class XP is split: first half added at primary levels 2,4,6... and second half at 3,5,7...</li>
+                    </ul>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold text-blue-400 mb-1">Experience Tracking</h4>
+                    <p className="text-sm text-gray-300">
+                      Using the Player's Handbook or Adventurer's Backpack, enter the XP needed for each level in "Level XP". For Single Class, enter one XP value per level. For Multi-Class or Class and a Half, enter each class's XP separately and the app will calculate the combined totals. As you gain XP throughout the campaign, the app will track your progress automatically.
+                    </p>
+                  </div>
+                  
+                  <div>
                     <h4 className="font-bold text-blue-400 mb-1">HP Tracking</h4>
                     <p className="text-sm text-gray-300">
                       Track your HP for each level. You can manually enter what you rolled on physical dice, or choose the correct die type and let the app roll and add your CON modifier automatically.
@@ -8948,13 +9059,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <h4 className="font-bold text-blue-400 mb-1">AC Tracking</h4>
                     <p className="text-sm text-gray-300">
                       Edit your base AC as well as add your DEX modifier and any other abilities or items that boost it. To add armor or a shield to your AC, first add those items to your Inventory, then return here to select them in AC Tracking.
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-bold text-blue-400 mb-1">Experience Tracking</h4>
-                    <p className="text-sm text-gray-300">
-                      Using the Player's Handbook or Adventurer's Backpack, enter the XP needed for each level in "Level XP". As you gain XP throughout the campaign, the app will track your progress automatically.
                     </p>
                   </div>
                   
@@ -9151,24 +9255,223 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
               {editModal.type === 'class' && (
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Class Name</label>
-                  <input
-                    type="text"
-                    value={modalForms.class}
-                    onChange={(e) => updateModalForm({ class: e.target.value })}
-                    className="w-full p-2 bg-gray-700 rounded text-white"
-                  />
-                  <button
-                    onClick={() => {
-                      updateChar({ class1: modalForms.class });
-                      setEditModal(null);
-                    }}
-                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
-                  >
-                    Save
-                  </button>
+                  {/* Step 1: Choose class type */}
+                  {classModalStep === 'choose' && (
+                    <div>
+                      <div className="text-sm text-gray-400 mb-4">Choose your class configuration:</div>
+                      
+                      <div className="space-y-3">
+                        <button
+                          onClick={() => {
+                            setClassModalForm(prev => ({ ...prev, classType: 'single', showClass3: false }));
+                            setClassModalStep('setup');
+                          }}
+                          className="w-full p-4 bg-gray-700 rounded-lg hover:bg-gray-600 text-left"
+                        >
+                          <div className="font-bold text-white">Single Class</div>
+                          <div className="text-sm text-gray-400">One class with standard XP progression</div>
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setClassModalForm(prev => ({ ...prev, classType: 'multi', showClass3: false }));
+                            setClassModalStep('setup');
+                          }}
+                          className="w-full p-4 bg-gray-700 rounded-lg hover:bg-gray-600 text-left"
+                        >
+                          <div className="font-bold text-white">Multi-Class</div>
+                          <div className="text-sm text-gray-400">2-3 classes with combined XP requirements (+200/level per extra class)</div>
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setClassModalForm(prev => ({ ...prev, classType: 'classAndHalf', showClass3: false }));
+                            setClassModalStep('setup');
+                          }}
+                          className="w-full p-4 bg-gray-700 rounded-lg hover:bg-gray-600 text-left"
+                        >
+                          <div className="font-bold text-white">Class and a Half</div>
+                          <div className="text-sm text-gray-400">Primary class + half XP from supporting class spread over 2 levels</div>
+                        </button>
+                      </div>
+                      
+                      <button
+                        onClick={() => setEditModal(null)}
+                        className="w-full py-2 bg-gray-600 rounded hover:bg-gray-500 mt-4"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Step 2: Setup classes based on type */}
+                  {classModalStep === 'setup' && (
+                    <div>
+                      {/* Back button to change class type */}
+                      <button
+                        onClick={() => setClassModalStep('choose')}
+                        className="text-sm text-blue-400 hover:text-blue-300 mb-3 flex items-center gap-1"
+                      >
+                        ← Change class type
+                      </button>
+                      
+                      {/* Class type indicator */}
+                      <div className="text-xs text-gray-500 mb-3">
+                        Type: <span className="text-gray-300 font-semibold">
+                          {classModalForm.classType === 'single' && 'Single Class'}
+                          {classModalForm.classType === 'multi' && 'Multi-Class'}
+                          {classModalForm.classType === 'classAndHalf' && 'Class and a Half'}
+                        </span>
+                      </div>
+                      
+                      {/* Single Class Setup */}
+                      {classModalForm.classType === 'single' && (
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Class Name</label>
+                          <input
+                            type="text"
+                            value={classModalForm.class1}
+                            onChange={(e) => setClassModalForm(prev => ({ ...prev, class1: e.target.value }))}
+                            placeholder="e.g., Fighter, Wizard, Rogue"
+                            className="w-full p-2 bg-gray-700 rounded text-white"
+                          />
+                        </div>
+                      )}
+                      
+                      {/* Multi-Class Setup */}
+                      {classModalForm.classType === 'multi' && (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Class 1</label>
+                            <input
+                              type="text"
+                              value={classModalForm.class1}
+                              onChange={(e) => setClassModalForm(prev => ({ ...prev, class1: e.target.value }))}
+                              placeholder="e.g., Fighter"
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Class 2</label>
+                            <input
+                              type="text"
+                              value={classModalForm.class2}
+                              onChange={(e) => setClassModalForm(prev => ({ ...prev, class2: e.target.value }))}
+                              placeholder="e.g., Wizard"
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            />
+                          </div>
+                          
+                          {classModalForm.showClass3 ? (
+                            <div>
+                              <label className="block text-sm text-gray-400 mb-1">Class 3</label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={classModalForm.class3}
+                                  onChange={(e) => setClassModalForm(prev => ({ ...prev, class3: e.target.value }))}
+                                  placeholder="e.g., Rogue"
+                                  className="flex-1 p-2 bg-gray-700 rounded text-white"
+                                />
+                                <button
+                                  onClick={() => setClassModalForm(prev => ({ ...prev, class3: '', showClass3: false }))}
+                                  className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setClassModalForm(prev => ({ ...prev, showClass3: true }))}
+                              className="text-sm text-blue-400 hover:text-blue-300"
+                            >
+                              + Add 3rd Class
+                            </button>
+                          )}
+                          
+                          <div className="text-xs text-gray-500 bg-gray-800 p-2 rounded">
+                            <div className="font-semibold text-gray-400 mb-1">Multi-Class XP Bonus:</div>
+                            {classModalForm.showClass3 ? (
+                              <div>+300 XP per level (Level 2 = +300, Level 3 = +600, etc.)</div>
+                            ) : (
+                              <div>+200 XP per level (Level 2 = +200, Level 3 = +400, etc.)</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Class and a Half Setup */}
+                      {classModalForm.classType === 'classAndHalf' && (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Primary Class</label>
+                            <input
+                              type="text"
+                              value={classModalForm.class1}
+                              onChange={(e) => setClassModalForm(prev => ({ ...prev, class1: e.target.value }))}
+                              placeholder="e.g., Fighter"
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            />
+                            <div className="text-xs text-gray-500 mt-1">Full XP requirements</div>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Supporting Class</label>
+                            <input
+                              type="text"
+                              value={classModalForm.class2}
+                              onChange={(e) => setClassModalForm(prev => ({ ...prev, class2: e.target.value }))}
+                              placeholder="e.g., Wizard"
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            />
+                            <div className="text-xs text-gray-500 mt-1">Half XP spread over 2 levels</div>
+                          </div>
+                          
+                          <div className="text-xs text-gray-500 bg-gray-800 p-2 rounded">
+                            <div className="font-semibold text-gray-400 mb-1">Class and a Half XP:</div>
+                            <div>Primary Level 2 = Primary L2 + ½ Supporting L1</div>
+                            <div>Primary Level 3 = Primary L3 + other ½ of Supporting L1</div>
+                            <div>Primary Level 4 = Primary L4 + ½ Supporting L2</div>
+                            <div>...and so on</div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <button
+                        onClick={() => {
+                          // Save class configuration
+                          const updates: Partial<Character> = {
+                            classType: classModalForm.classType,
+                            class1: classModalForm.class1,
+                            class2: classModalForm.classType !== 'single' ? classModalForm.class2 : undefined,
+                            class3: classModalForm.classType === 'multi' && classModalForm.showClass3 ? classModalForm.class3 : undefined
+                          };
+                          
+                          // Initialize XP tables if switching to multi-class types
+                          if (classModalForm.classType === 'multi' || classModalForm.classType === 'classAndHalf') {
+                            if (!char.xpTableClass1 || char.xpTableClass1.length === 0) {
+                              updates.xpTableClass1 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                            }
+                            if (!char.xpTableClass2 || char.xpTableClass2.length === 0) {
+                              updates.xpTableClass2 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                            }
+                            if (classModalForm.classType === 'multi' && classModalForm.showClass3) {
+                              if (!char.xpTableClass3 || char.xpTableClass3.length === 0) {
+                                updates.xpTableClass3 = [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000];
+                              }
+                            }
+                          }
+                          
+                          updateChar(updates);
+                          setEditModal(null);
+                        }}
+                        className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-4"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  )}
                 </div>
-
               )}
 
               {editModal.type === 'speed' && (
@@ -9326,20 +9629,21 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <div className="mb-3 p-2 bg-gray-900 rounded">
                     <label className="block text-sm font-bold text-blue-400 mb-1">HP Hit Die</label>
                     <div className="flex items-center gap-3">
-                      <input
-                        type="text" inputMode="numeric"
+                      <select
                         value={hpDieDraft}
-                        onChange={(e) => setHpDieDraft(parseInt(e.target.value || '12', 10) || 12)}
+                        onChange={(e) => setHpDieDraft(parseInt(e.target.value, 10) || 8)}
                         className="w-28 p-2 bg-gray-700 rounded text-white"
-                        min={4}
-                        max={12}
-                        step={2}
-                      />
+                      >
+                        <option value={4}>d4</option>
+                        <option value={6}>d6</option>
+                        <option value={8}>d8</option>
+                        <option value={10}>d10</option>
+                        <option value={12}>d12</option>
+                      </select>
                       <div className="text-sm text-gray-300">
                         Roll will add CON mod: <span className="font-bold text-white">{calcMod(getAttributeTotal('con')) >= 0 ? '+' : ''}{calcMod(getAttributeTotal('con'))}</span>
                       </div>
                     </div>
-                    <div className="text-xs text-gray-400 mt-1">Typical: 4, 6, 8, 10, 12</div>
                   </div>
 
                   <div className="mb-3 p-2 bg-gray-900 rounded">
@@ -9827,40 +10131,268 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
 {editModal.type === 'xpTable' && (
                 <div className="max-h-96 overflow-y-auto pr-6" style={{ scrollbarGutter: 'stable' }}>
-                  <div className="text-sm text-gray-400 mb-3">
-                    Enter XP needed to reach each level (Levels 1-25). Level automatically updates based on current XP.
-                  </div>
-                  <div className="space-y-2">
-                    {xpTableForm.map((xp, i) => (
-                      <div key={i} className="flex flex-wrap items-center gap-2">
-                        <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
-                        <input
-                          type="text" inputMode="numeric"
-                          value={xp === 0 ? '' : xp}
-                          onChange={(e) => updateXpTableForm(i, parseInt(e.target.value) || 0)}
-                          className="flex-1 p-2 bg-gray-700 rounded text-white"
-                        />
-                        <span className="text-xs text-gray-400">XP</span>
+                  {/* Single Class XP Table */}
+                  {(!char.classType || char.classType === 'single') && (
+                    <>
+                      <div className="text-sm text-gray-400 mb-3">
+                        {char.class1 && <span className="text-white font-semibold">{char.class1}</span>}
+                        {!char.class1 && 'Single Class'} - Enter XP needed to reach each level.
                       </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => {
-                      // Enforce strictly increasing XP per level
-                      const newTable = [...xpTableForm];
-                      for (let i = 1; i < newTable.length; i++) {
-                        if (newTable[i] <= newTable[i - 1]) {
-                          newTable[i] = newTable[i - 1] + 1;
-                        }
-                      }
-
-                      updateChar({ xpTable: newTable });
-                      setEditModal(null);
-                    }}
-                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
-                  >
-                    Save XP Table
-                  </button>
+                      <div className="space-y-2">
+                        {xpTableForm.map((xp, i) => (
+                          <div key={i} className="flex flex-wrap items-center gap-2">
+                            <label className="w-20 text-sm font-bold">Level {i + 1}:</label>
+                            <input
+                              type="text" inputMode="numeric"
+                              value={xp === 0 ? '' : xp}
+                              onChange={(e) => updateXpTableForm(i, parseInt(e.target.value) || 0)}
+                              className="flex-1 p-2 bg-gray-700 rounded text-white"
+                            />
+                            <span className="text-xs text-gray-400">XP</span>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newTable = [...xpTableForm];
+                          for (let i = 1; i < newTable.length; i++) {
+                            if (newTable[i] <= newTable[i - 1]) {
+                              newTable[i] = newTable[i - 1] + 1;
+                            }
+                          }
+                          updateChar({ xpTable: newTable });
+                          setEditModal(null);
+                        }}
+                        className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
+                      >
+                        Save XP Table
+                      </button>
+                    </>
+                  )}
+                  
+                  {/* Multi-Class XP Table */}
+                  {char.classType === 'multi' && (
+                    <>
+                      <div className="text-sm text-gray-400 mb-3">
+                        Enter XP needed for each class. Combined total + multi-class bonus shown.
+                      </div>
+                      
+                      <div className="text-xs text-gray-500 mb-2">
+                        Multi-class bonus: +{char.class3 ? '300' : '200'} XP per level
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {xpTableClass1Form.map((_, i) => {
+                          const c1 = xpTableClass1Form[i] || 0;
+                          const c2 = xpTableClass2Form[i] || 0;
+                          const c3 = char.class3 ? (xpTableClass3Form[i] || 0) : 0;
+                          const numClasses = char.class3 ? 3 : 2;
+                          const multiBonus = i * (numClasses === 3 ? 300 : 200);
+                          const total = c1 + c2 + c3 + multiBonus;
+                          
+                          return (
+                            <div key={i} className="bg-gray-800 p-3 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="font-bold text-white">Level {i + 1}</span>
+                                <span className="text-yellow-400 font-semibold">
+                                  Total: {total.toLocaleString()}
+                                  {multiBonus > 0 && <span className="text-xs text-gray-500 ml-1">(+{multiBonus})</span>}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-blue-400 w-24 flex-shrink-0">{char.class1 || 'Class 1'}</label>
+                                  <input
+                                    type="text" inputMode="numeric"
+                                    value={c1 === 0 ? '' : c1}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setXpTableClass1Form(prev => {
+                                        const next = [...prev];
+                                        next[i] = val;
+                                        return next;
+                                      });
+                                    }}
+                                    className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
+                                    placeholder="0"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-green-400 w-24 flex-shrink-0">{char.class2 || 'Class 2'}</label>
+                                  <input
+                                    type="text" inputMode="numeric"
+                                    value={c2 === 0 ? '' : c2}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setXpTableClass2Form(prev => {
+                                        const next = [...prev];
+                                        next[i] = val;
+                                        return next;
+                                      });
+                                    }}
+                                    className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
+                                    placeholder="0"
+                                  />
+                                </div>
+                                {char.class3 && (
+                                  <div className="flex items-center gap-2">
+                                    <label className="text-xs text-purple-400 w-24 flex-shrink-0">{char.class3}</label>
+                                    <input
+                                      type="text" inputMode="numeric"
+                                      value={c3 === 0 ? '' : c3}
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        setXpTableClass3Form(prev => {
+                                          const next = [...prev];
+                                          next[i] = val;
+                                          return next;
+                                        });
+                                      }}
+                                      className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
+                                      placeholder="0"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      
+                      <div className="text-xs text-gray-500 mt-2">
+                        Multi-class bonus: +{char.class3 ? '300' : '200'} XP per level
+                      </div>
+                      
+                      <button
+                        onClick={() => {
+                          // Calculate combined xpTable
+                          const numClasses = char.class3 ? 3 : 2;
+                          const combinedTable = xpTableClass1Form.map((c1, i) => {
+                            const c2 = xpTableClass2Form[i] || 0;
+                            const c3 = char.class3 ? (xpTableClass3Form[i] || 0) : 0;
+                            const multiBonus = i * (numClasses === 3 ? 300 : 200);
+                            return c1 + c2 + c3 + multiBonus;
+                          });
+                          
+                          updateChar({
+                            xpTable: combinedTable,
+                            xpTableClass1: xpTableClass1Form,
+                            xpTableClass2: xpTableClass2Form,
+                            xpTableClass3: char.class3 ? xpTableClass3Form : undefined
+                          });
+                          setEditModal(null);
+                        }}
+                        className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
+                      >
+                        Save XP Tables
+                      </button>
+                    </>
+                  )}
+                  
+                  {/* Class and a Half XP Table */}
+                  {char.classType === 'classAndHalf' && (
+                    <>
+                      <div className="text-sm text-gray-400 mb-3">
+                        Enter XP for primary class (full) and supporting class (half, spread over 2 levels).
+                      </div>
+                      
+                      <div className="text-xs text-gray-500 mb-2 bg-gray-800 p-2 rounded">
+                        Supporting class XP is split: first half added at odd primary levels (2,4,6...), second half at even (3,5,7...).
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {xpTableClass1Form.map((_, i) => {
+                          const primaryXP = xpTableClass1Form[i] || 0;
+                          const supportingLevelIndex = Math.floor((i) / 2);
+                          const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
+                          const halfSupporting = Math.floor(supportingXP / 2);
+                          const supportCost = i === 0 ? 0 : halfSupporting;
+                          const total = primaryXP + supportCost;
+                          const isFirstHalf = i % 2 === 1;
+                          const supportLevelForDisplay = Math.ceil(i / 2);
+                          
+                          return (
+                            <div key={i} className="bg-gray-800 p-3 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="font-bold text-white">Level {i + 1}</span>
+                                <span className="text-yellow-400 font-semibold">
+                                  Total: {total.toLocaleString()}
+                                  {supportCost > 0 && <span className="text-xs text-gray-500 ml-1">(+{supportCost})</span>}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-blue-400 w-24 flex-shrink-0">{char.class1 || 'Primary'}</label>
+                                  <input
+                                    type="text" inputMode="numeric"
+                                    value={primaryXP === 0 ? '' : primaryXP}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setXpTableClass1Form(prev => {
+                                        const next = [...prev];
+                                        next[i] = val;
+                                        return next;
+                                      });
+                                    }}
+                                    className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
+                                    placeholder="0"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-green-400 w-24 flex-shrink-0">
+                                    {char.class2 || 'Support'} L{supportLevelForDisplay}
+                                  </label>
+                                  {i > 0 && i % 2 === 1 ? (
+                                    <input
+                                      type="text" inputMode="numeric"
+                                      value={supportingXP === 0 ? '' : supportingXP}
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        setXpTableClass2Form(prev => {
+                                          const next = [...prev];
+                                          next[supportingLevelIndex] = val;
+                                          return next;
+                                        });
+                                      }}
+                                      className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
+                                      placeholder="Full XP for this level"
+                                    />
+                                  ) : (
+                                    <div className="flex-1 text-xs text-gray-500 p-2 bg-gray-700 rounded">
+                                      {i === 0 ? '— (none at L1)' : `½ of ${supportingXP.toLocaleString()} = ${halfSupporting.toLocaleString()}`}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      
+                      <button
+                        onClick={() => {
+                          // Calculate combined xpTable for class and a half
+                          const combinedTable = xpTableClass1Form.map((primaryXP, i) => {
+                            if (i === 0) return primaryXP;
+                            const supportingLevelIndex = Math.floor(i / 2);
+                            const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
+                            const halfSupporting = Math.floor(supportingXP / 2);
+                            return primaryXP + halfSupporting;
+                          });
+                          
+                          updateChar({
+                            xpTable: combinedTable,
+                            xpTableClass1: xpTableClass1Form,
+                            xpTableClass2: xpTableClass2Form
+                          });
+                          setEditModal(null);
+                        }}
+                        className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
+                      >
+                        Save XP Tables
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -10233,7 +10765,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                             containerCoins.silver + containerCoins.copper;
                     
                     // Get which coins are selected for moving
-                    const moveCoinsSelection = walletForm.moveCoins || { copper: true, silver: true, gold: true, electrum: true, platinum: true };
+                    const moveCoinsSelection = walletForm.moveCoins || { copper: false, silver: false, gold: false, electrum: false, platinum: false };
                     
                     // Ensure wallet values are whole numbers
                     const walletRounded = {
