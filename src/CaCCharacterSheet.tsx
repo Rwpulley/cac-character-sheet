@@ -1132,7 +1132,8 @@ const createNewCharacter = (): Character => ({
   grimoires: [], 
   magicItems: [], 
   pets: [],
-  initiativeMod: 0, 
+  initiativeMod: 0,
+  initiativeBonuses: [],
   primeSaveBonus: 6, 
   attackBonus: 0,
   baseBth: 0, 
@@ -4765,32 +4766,62 @@ if (editModal.type === 'acTracking' && char) {
             </div>
 
             {/* Initiative Roller */}
-            <div className="bg-gray-700 p-3 rounded flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold">🎲 Initiative</span>
-                {char.initiativeRoll != null && (
-                  <span className="text-xl font-bold text-yellow-400">{char.initiativeRoll}</span>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    const roll = rollDice(10);
-                    updateChar({ initiativeRoll: roll });
-                  }}
-                  className="px-3 py-1 bg-blue-600 rounded hover:bg-blue-700 text-sm font-bold"
-                >
-                  Roll d10
-                </button>
-                {char.initiativeRoll != null && (
+            <div className="bg-gray-700 p-3 rounded">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold">🎲 Init</span>
+                  {char.initiativeRoll != null && (() => {
+                    const totalBonus = (char.initiativeBonuses || []).reduce((sum, b) => sum + (Number(b.value) || 0), 0);
+                    const total = char.initiativeRoll + totalBonus;
+                    return (
+                      <span className="text-xl font-bold text-yellow-400">
+                        {total}
+                        {totalBonus !== 0 && (
+                          <span className="text-sm text-gray-400 ml-1">
+                            ({char.initiativeRoll}{totalBonus >= 0 ? '+' : ''}{totalBonus})
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div className="flex flex-wrap gap-1">
                   <button
-                    onClick={() => updateChar({ initiativeRoll: null })}
-                    className="px-2 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                    onClick={() => setEditModal({ type: 'initiativeBonus' })}
+                    className="px-2 py-1 bg-gray-600 rounded hover:bg-gray-500 text-xs"
                   >
-                    Clear
+                    Bonus{(char.initiativeBonuses || []).length > 0 && ` (${(char.initiativeBonuses || []).reduce((sum, b) => sum + (Number(b.value) || 0), 0) >= 0 ? '+' : ''}${(char.initiativeBonuses || []).reduce((sum, b) => sum + (Number(b.value) || 0), 0)})`}
                   </button>
-                )}
+                  <button
+                    onClick={() => {
+                      const roll = rollDice(10);
+                      updateChar({ initiativeRoll: roll });
+                    }}
+                    className="px-2 py-1 bg-blue-600 rounded hover:bg-blue-700 text-xs font-bold"
+                  >
+                    Roll
+                  </button>
+                  {char.initiativeRoll != null && (
+                    <button
+                      onClick={() => updateChar({ initiativeRoll: null })}
+                      className="px-2 py-1 bg-gray-600 rounded hover:bg-gray-500 text-xs"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
+              {/* Show bonus sources */}
+              {(char.initiativeBonuses || []).length > 0 && (
+                <div className="mt-2 text-xs text-gray-400">
+                  {(char.initiativeBonuses || []).map((b, i) => (
+                    <span key={i}>
+                      {i > 0 && ', '}
+                      {b.description || 'Bonus'}: {(Number(b.value) || 0) >= 0 ? '+' : ''}{Number(b.value) || 0}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {(char.attackBonus !== 0 || char.damageBonus !== 0) && (
@@ -8530,6 +8561,7 @@ if (editModal.type === 'acTracking' && char) {
                 {editModal.type === 'attribute' && `Edit ${editModal.attr?.toUpperCase()}`}
                 {editModal.type === 'saveModifier' && `${editModal.attr?.toUpperCase()} Save Modifier`}
                 {editModal.type === 'bonusModifiers' && 'Bonus Modifiers (Bless/Curse)'}
+                {editModal.type === 'initiativeBonus' && 'Initiative Bonuses'}
                 {editModal.type === 'saveModifiers' && 'Save Modifiers (Bless/Curse)'}
                 {editModal.type === 'wallet' && 'Wallet'}
                 {editModal.type === 'newItem' && (editModal.fromMagicInventory ? 'Add Magic Item' : 'Add New Item')}
@@ -10699,6 +10731,91 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
                   >
                     Save
+                  </button>
+                </div>
+              )}
+
+              {editModal.type === 'initiativeBonus' && (
+                <div>
+                  <div className="text-sm text-gray-400 mb-3">Add bonuses to initiative from items, abilities, etc.</div>
+                  
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm text-gray-400">Initiative Bonuses</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = [...(char.initiativeBonuses || []), { description: '', value: 0, valueText: '0' }];
+                        updateChar({ initiativeBonuses: next });
+                      }}
+                      className="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                    >
+                      + Add Bonus
+                    </button>
+                  </div>
+
+                  {(char.initiativeBonuses || []).length === 0 ? (
+                    <div className="text-sm text-gray-500 text-center py-4">No initiative bonuses. Click "Add Bonus" to add one.</div>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {(char.initiativeBonuses || []).map((bonus, idx) => (
+                        <div key={idx} className="bg-gray-800 p-2 rounded">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={bonus.description || ''}
+                              onChange={(e) => {
+                                const next = [...(char.initiativeBonuses || [])];
+                                next[idx] = { ...next[idx], description: e.target.value };
+                                updateChar({ initiativeBonuses: next });
+                              }}
+                              className="flex-1 min-w-0 p-2 bg-gray-700 rounded text-white text-sm"
+                              placeholder="Description"
+                            />
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={bonus.valueText ?? String(bonus.value ?? 0)}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const next = [...(char.initiativeBonuses || [])];
+                                const updated = { ...next[idx], valueText: raw };
+                                const parsed = parseInt(raw, 10);
+                                if (!isNaN(parsed)) updated.value = parsed;
+                                next[idx] = updated;
+                                updateChar({ initiativeBonuses: next });
+                              }}
+                              className="w-14 flex-shrink-0 p-2 bg-gray-700 rounded text-white text-sm text-center"
+                              placeholder="+/-"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = (char.initiativeBonuses || []).filter((_, i) => i !== idx);
+                                updateChar({ initiativeBonuses: next });
+                              }}
+                              className="p-2 bg-red-600 rounded hover:bg-red-700 flex-shrink-0"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-3 pt-3 border-t border-gray-600 text-sm">
+                    <span className="text-gray-400">Total Bonus: </span>
+                    <span className="font-bold text-yellow-400">
+                      {(char.initiativeBonuses || []).reduce((sum, b) => sum + (Number(b.value) || 0), 0) >= 0 ? '+' : ''}
+                      {(char.initiativeBonuses || []).reduce((sum, b) => sum + (Number(b.value) || 0), 0)}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => setEditModal(null)}
+                    className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700 mt-3"
+                  >
+                    Done
                   </button>
                 </div>
               )}
