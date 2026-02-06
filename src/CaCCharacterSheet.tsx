@@ -4045,7 +4045,11 @@ if (editModal.type === 'acTracking' && char) {
               >
                 <div className="text-xl font-bold">{c.name}</div>
                 <div className={theme.textMuted}>
-                  {c.race} {c.class1} {getXpDerivedLevel(c)}{c.class2 && ` / ${c.class2} ${c.class2Level}`}
+                  {c.race} {c.class1} {getXpDerivedLevel(c)}
+                  {c.classType === 'multi' && c.class2 && ` / ${c.class2} ${getXpDerivedLevel(c)}`}
+                  {c.classType === 'multi' && c.class3 && ` / ${c.class3} ${getXpDerivedLevel(c)}`}
+                  {c.classType === 'classAndHalf' && c.class2 && ` / ${c.class2} ${Math.floor(getXpDerivedLevel(c) / 2)}`}
+                  {!c.classType && c.class2 && ` / ${c.class2} ${c.class2Level || 0}`}
                 </div>
               </button>
               <button 
@@ -10124,17 +10128,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
               {editModal.type === 'addXp' && (
                 <div className="space-y-4">
-                  <div className="text-sm text-gray-400">Add XP to the current character.</div>
-                  <label className="block text-sm text-gray-400">XP to Add</label>
-                  <DomStepper value={modalForms.xpAdd} onChange={(v) => updateModalForm({ xpAdd: v })} step={100} min={0} allowManual={true} />
+                  <div className="text-sm text-gray-400">Add or remove XP from the current character. Use negative numbers to remove XP.</div>
+                  <label className="block text-sm text-gray-400">XP to Add/Remove</label>
+                  <DomStepper value={modalForms.xpAdd} onChange={(v) => updateModalForm({ xpAdd: v })} step={100} min={-999999} allowManual={true} />
                   <button
                     onClick={() => {
-                      updateChar({ currentXp: (char.currentXp || 0) + modalForms.xpAdd });
+                      const newXp = Math.max(0, (char.currentXp || 0) + modalForms.xpAdd);
+                      updateChar({ currentXp: newXp });
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
                   >
-                    Add XP
+                    {modalForms.xpAdd >= 0 ? 'Add XP' : 'Remove XP'}
                   </button>
                 </div>
               )}
