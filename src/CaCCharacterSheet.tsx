@@ -213,6 +213,7 @@ interface Character {
   companions: Companion[];
   notes: string;
   classAbilities: string;
+  classAttributeMods?: { attr: string; value: number; valueText?: string; description?: string }[];
   raceAbilities: string;
   advantages: string;
   holySymbol: string;
@@ -1087,6 +1088,7 @@ const createNewCharacter = (): Character => ({
   class2Level: 0, 
   class2Details: "",
   classAbilities: [],
+  classAttributeMods: [],
   advantages: [],
   raceAbilities: [],
   alignment: '',
@@ -2045,6 +2047,10 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       const raceMatch = (char.raceAttributeMods || []).find(x => String(x.attr).toLowerCase() === attrKey);
       const raceBonus = raceMatch ? (Number(raceMatch.value) || 0) : 0;
       
+      // Class bonus
+      const classMatch = (char.classAttributeMods || []).find(x => String(x.attr).toLowerCase() === attrKey);
+      const classBonus = classMatch ? (Number(classMatch.value) || 0) : 0;
+      
       // Item bonus
       const equipped = (char.equippedAttrBonuses?.[attrKey] || []).map(x => String(x));
       let itemBonus = 0;
@@ -2058,7 +2064,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
         }, 0);
       }
       
-      return rolled + raceBonus + bonusMod + itemBonus;
+      return rolled + raceBonus + classBonus + bonusMod + itemBonus;
     };
     
     return {
@@ -2069,7 +2075,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       wis: calcAttrTotal('wis'),
       cha: calcAttrTotal('cha')
     };
-  }, [char?.attributes, char?.raceAttributeMods, char?.equippedAttrBonuses, char?.inventory, normalizeItemStatBonusesStatic]);
+  }, [char?.attributes, char?.raceAttributeMods, char?.classAttributeMods, char?.equippedAttrBonuses, char?.inventory, normalizeItemStatBonusesStatic]);
 
   // Memoized attribute modifiers (derived from totals)
   const memoizedAttributeMods = useMemo(() => ({
@@ -4515,12 +4521,29 @@ if (editModal.type === 'acTracking' && char) {
       onClick={() => setEditModal({ type: 'classAbilities' })}
       className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500"
     >
-      {((char.classAbilities || []).length ? 'Edit' : 'Add')}
+      {((char.classAbilities || []).length || (char.classAttributeMods || []).length ? 'Edit' : 'Add')}
     </button>
   </div>
-  {(char.classAbilities || []).length === 0 ? (
+  {/* Class Attribute Modifiers */}
+  {(char.classAttributeMods || []).length > 0 && (() => {
+    const mods = char.classAttributeMods || [];
+    return (
+      <div className="space-y-2 mb-3 text-sm">
+        <div className="bg-gray-700 p-2 rounded">
+          <span className="font-semibold">Attributes:</span>{" "}
+          {mods.map((m, i) => (
+            <span key={i}>
+              {String(m.attr).toUpperCase()} {Number(m.value) >= 0 ? "+" : ""}{Number(m.value) || 0}
+              {i < mods.length - 1 ? ", " : ""}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  })()}
+  {(char.classAbilities || []).length === 0 && (char.classAttributeMods || []).length === 0 ? (
     <div className="text-sm text-gray-400">No class abilities added.</div>
-  ) : (
+  ) : (char.classAbilities || []).length > 0 && (
     <div className="space-y-2">
       {(char.classAbilities || []).map((a, i) => (
         <div key={i} className="bg-gray-700 p-2 rounded">
@@ -8593,6 +8616,82 @@ if (editModal.type === 'acTracking' && char) {
                         </button>
                       </div>
                     ))}
+                  </div>
+
+                  {/* Class Modifiers */}
+                  <div className="mt-4 pt-3 border-t border-gray-600">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm text-gray-400">Class Modifiers</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...(char.classAttributeMods || []), { attr: 'str', value: 0, valueText: '0', description: '' }];
+                          updateChar({ classAttributeMods: next });
+                        }}
+                        className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 text-sm"
+                      >
+                        Add More
+                      </button>
+                    </div>
+
+                    {(char.classAttributeMods || []).length === 0 ? (
+                      <div className="text-sm text-gray-400">No class attribute modifiers added.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {(char.classAttributeMods || []).map((row, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <select
+                              value={row.attr || 'str'}
+                              onChange={(e) => {
+                                const next = [...(char.classAttributeMods || [])];
+                                next[idx] = { ...next[idx], attr: e.target.value };
+                                updateChar({ classAttributeMods: next });
+                              }}
+                              className="p-2 bg-gray-700 rounded text-white text-sm"
+                            >
+                              <option value="str">STR</option>
+                              <option value="dex">DEX</option>
+                              <option value="con">CON</option>
+                              <option value="int">INT</option>
+                              <option value="wis">WIS</option>
+                              <option value="cha">CHA</option>
+                            </select>
+
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={row.valueText ?? String(row.value ?? 0)}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const next = [...(char.classAttributeMods || [])];
+                                const updated = { ...next[idx], valueText: raw };
+
+                                // Update numeric value when parseable (supports negative).
+                                const parsed = parseInt(raw, 10);
+                                if (!Number.isNaN(parsed)) updated.value = parsed;
+
+                                next[idx] = updated;
+                                updateChar({ classAttributeMods: next });
+                              }}
+                              className="w-24 p-2 bg-gray-700 rounded text-white text-sm"
+                              placeholder="+/-"
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = (char.classAttributeMods || []).filter((_, i) => i !== idx);
+                                updateChar({ classAttributeMods: next });
+                              }}
+                              className="px-2 py-2 bg-red-600 rounded hover:bg-red-700"
+                              title="Remove"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <button
