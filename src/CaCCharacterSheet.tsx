@@ -2044,13 +2044,15 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       const rolled = Number.isFinite(a?.rolledScore) ? a.rolledScore : 10;
       const bonusMod = Number.isFinite(a?.bonusMod) ? a.bonusMod : 0;
       
-      // Race bonus
-      const raceMatch = (char.raceAttributeMods || []).find(x => String(x.attr).toLowerCase() === attrKey);
-      const raceBonus = raceMatch ? (Number(raceMatch.value) || 0) : 0;
+      // Race bonus (sum all matching)
+      const raceBonus = (char.raceAttributeMods || [])
+        .filter(x => String(x.attr).toLowerCase() === attrKey)
+        .reduce((sum, x) => sum + (Number(x.value) || 0), 0);
       
-      // Class bonus
-      const classMatch = (char.classAttributeMods || []).find(x => String(x.attr).toLowerCase() === attrKey);
-      const classBonus = classMatch ? (Number(classMatch.value) || 0) : 0;
+      // Class bonus (sum all matching)
+      const classBonus = (char.classAttributeMods || [])
+        .filter(x => String(x.attr).toLowerCase() === attrKey)
+        .reduce((sum, x) => sum + (Number(x.value) || 0), 0);
       
       // Item bonus
       const equipped = (char.equippedAttrBonuses?.[attrKey] || []).map(x => String(x));
@@ -2603,8 +2605,17 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const getRaceAttributeBonus = (attrKey) => {
     if (!char) return 0;
     const list = (char.raceAttributeMods || []);
-    const match = list.find(x => String(x.attr).toLowerCase() === String(attrKey).toLowerCase());
-    return match ? (Number(match.value) || 0) : 0;
+    return list
+      .filter(x => String(x.attr).toLowerCase() === String(attrKey).toLowerCase())
+      .reduce((sum, x) => sum + (Number(x.value) || 0), 0);
+  };
+
+  const getClassAttributeBonus = (attrKey) => {
+    if (!char) return 0;
+    const list = (char.classAttributeMods || []);
+    return list
+      .filter(x => String(x.attr).toLowerCase() === String(attrKey).toLowerCase())
+      .reduce((sum, x) => sum + (Number(x.value) || 0), 0);
   };
 
   const getRaceACBonus = () => {
@@ -4477,9 +4488,10 @@ if (editModal.type === 'acTracking' && char) {
                 {Object.entries(char.attributes).map(([key, attr]) => {
                   const rolled = getAttributeRolled(key);
                   const raceMod = getRaceAttributeBonus(key);
+                  const classMod = getClassAttributeBonus(key);
                   const bonusMod = getAttributeBonusMod(key);
                   const itemMod = getItemAttributeBonus(key);
-                  const totalScore = rolled + raceMod + bonusMod + itemMod;
+                  const totalScore = rolled + raceMod + classMod + bonusMod + itemMod;
                   const mod = calcMod(totalScore);
                   return (
                     <div key={key} className="bg-gray-700 p-3 rounded">
@@ -10585,11 +10597,20 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         .filter(m => String(m.attr).toLowerCase() === String(attrKey).toLowerCase())
                         .reduce((sum, m) => sum + (Number(m.value) || 0), 0);
 
+                      const classTotal = (char.classAttributeMods || [])
+                        .filter(m => String(m.attr).toLowerCase() === String(attrKey).toLowerCase())
+                        .reduce((sum, m) => sum + (Number(m.value) || 0), 0);
+
                       return (
                         <>
                           <div className="mb-2">
                             <span className="text-gray-300 font-semibold">Race Modifier:</span>{' '}
                             <span>{raceTotal >= 0 ? '+' : ''}{raceTotal}</span>
+                          </div>
+
+                          <div className="mb-2">
+                            <span className="text-gray-300 font-semibold">Class Modifier:</span>{' '}
+                            <span>{classTotal >= 0 ? '+' : ''}{classTotal}</span>
                           </div>
 
                           <div className="flex items-center justify-between">
@@ -10643,7 +10664,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           </div>
 
                           <div className="font-bold mt-2">
-                            Total: {modalForms.attrRolled + raceTotal + modalForms.attrBonus + itemTotal}
+                            Total: {modalForms.attrRolled + raceTotal + classTotal + modalForms.attrBonus + itemTotal}
                           </div>
                         </>
                       );
