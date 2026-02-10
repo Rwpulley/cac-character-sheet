@@ -9054,6 +9054,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     By clicking <span className="font-semibold text-white">Potion</span>, this item will be categorized with Magical Items & Potions for easy organization.
                   </p>
                   <p className="text-sm text-gray-300">
+                    By clicking <span className="font-semibold text-white">Gem</span>, this item's worth will be counted towards your wallet total wealth.
+                  </p>
+                  <p className="text-sm text-gray-300">
                     By clicking <span className="font-semibold text-white">Container (Backpack/Pouch)</span>, this item can hold other items. Items inside a container don't count toward your EV encumbrance—only the container's EV counts. For normal containers, set a capacity (max items) and items with EV less than the capacity can be stored. For magical containers, set a max weight—the contents' weight won't count toward your total either. You can also store coins in magical containers via your Wallet.
                   </p>
                 </div>
@@ -10929,26 +10932,26 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <div className="text-xs text-gray-500">Total Wealth</div>
                         </div>
                         
-                        <div className="grid grid-cols-5 gap-1 text-center mb-3">
-                          <div className="bg-gray-800 rounded p-2 min-w-0">
-                            <div className="text-base sm:text-lg font-bold text-orange-400 truncate">{cp.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500">CP</div>
+                        <div className="flex flex-wrap justify-center gap-1 mb-3">
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-orange-400 text-center">{cp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">CP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2 min-w-0">
-                            <div className="text-base sm:text-lg font-bold text-gray-400 truncate">{sp.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500">SP</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-gray-400 text-center">{sp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">SP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2 min-w-0">
-                            <div className="text-base sm:text-lg font-bold text-yellow-400 truncate">{gp.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500">GP</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-yellow-400 text-center">{gp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">GP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2 min-w-0">
-                            <div className="text-base sm:text-lg font-bold text-blue-300 truncate">{ep.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500">EP</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-blue-300 text-center">{ep.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">EP</div>
                           </div>
-                          <div className="bg-gray-800 rounded p-2 min-w-0">
-                            <div className="text-base sm:text-lg font-bold text-gray-300 truncate">{pp.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500">PP</div>
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-gray-300 text-center">{pp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">PP</div>
                           </div>
                         </div>
                         
