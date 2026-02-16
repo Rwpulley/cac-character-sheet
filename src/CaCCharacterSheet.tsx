@@ -183,6 +183,7 @@ interface Character {
   hp: number;
   maxHpBonus: number;
   hpByLevel: number[];
+  hpRollsByLevel?: number[];  // Stores just the base roll for each level (without CON mod)
   levelDrained?: boolean[];  // Track which levels are drained (unchecked = drained)
   hpDie: number;
   ac: number;
@@ -1123,6 +1124,7 @@ const createNewCharacter = (): Character => ({
   },
   xpTable: [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000],
   hpByLevel: [0, 0, 0],
+  hpRollsByLevel: [0, 0, 0],
   hpDie: 12,
   attacks: [], 
   inventory: [], 
@@ -2311,18 +2313,36 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     };
   }, [char?.xpTable, char?.currentXp, char?.levelDrained, char?.hpByLevel]);
 
-  // Memoized max HP calculation (accounts for level drain)
+  // Memoized max HP calculation (accounts for level drain and dynamically applies CON mod)
   const memoizedMaxHP = useMemo(() => {
-    if (!char || !char.hpByLevel) return char?.maxHp || 0;
+    if (!char) return char?.maxHp || 0;
+    
+    // Calculate current CON modifier
+    const conAttr = char.attributes?.con;
+    if (!conAttr) return char?.maxHp || 0;
+    
+    const conTotal = (conAttr.rolledScore || 10) + (conAttr.raceBonus || 0) + (conAttr.bonusMod || 0);
+    const conMod = Math.floor((conTotal - 10) / 2);
+    
+    // Use hpRollsByLevel if available (new system), otherwise fall back to hpByLevel (old system)
+    const rolls = char.hpRollsByLevel || char.hpByLevel || [];
     const levelDrained = char.levelDrained || [];
-    // Only sum HP from levels that are NOT drained (drained = true means level is lost)
-    const levelHP = char.hpByLevel.reduce((sum, hp, idx) => {
+    
+    // Sum HP from non-drained levels: base roll + CON mod per level
+    const levelHP = rolls.reduce((sum, roll, idx) => {
       const isDrained = levelDrained[idx] === true;
-      return sum + (isDrained ? 0 : hp);
+      if (isDrained) return sum;
+      
+      const baseRoll = Number(roll) || 0;
+      if (baseRoll <= 0) return sum;
+      
+      // Apply CON mod to each level's roll (minimum 1 HP per level)
+      return sum + Math.max(1, baseRoll + conMod);
     }, 0);
+    
     const bonusHP = char.hpBonus || 0;
     return levelHP + bonusHP;
-  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp, char?.levelDrained]);
+  }, [char?.hpRollsByLevel, char?.hpByLevel, char?.hpBonus, char?.levelDrained, char?.attributes?.con]);
   
   // Calculate effective level (actual level minus drained levels)
   const effectiveLevel = useMemo(() => {
@@ -4405,21 +4425,22 @@ if (editModal.type === 'acTracking' && char) {
                     Edit HP
                   </button>
                   <button onClick={() => {
-                      const levels = (char.hpByLevel && char.hpByLevel.length) ? char.hpByLevel : [0, 0, 0];
-                      const padded = levels.slice();
+                      // Use hpRollsByLevel if available (new system), otherwise try hpByLevel (old system)
+                      const rolls = char.hpRollsByLevel || char.hpByLevel || [0, 0, 0];
+                      const padded = rolls.slice();
                       while (padded.length < 3) padded.push(0);
-                      setHpDraftLevels(padded);
-                      const conMod = calcMod(getAttributeTotal('con'));
-                      const rolls = padded.map((v) => {
-                        const total = Number(v) || 0;
-                        if (total <= 0) return '';
-                        const raw = total - conMod;
-                        return String(raw);
+                      
+                      // Convert to strings for the draft state
+                      const rollStrings = padded.map((v) => {
+                        const roll = Number(v) || 0;
+                        return roll > 0 ? String(roll) : '';
                       });
-                      setHpDraftRolls(rolls);
+                      setHpDraftRolls(rollStrings);
 
                       let lastFilled = -1;
-                      for (let i = 0; i < rolls.length; i++) { if ((parseInt(rolls[i] || '0', 10) || 0) > 0) lastFilled = i; }
+                      for (let i = 0; i < rollStrings.length; i++) { 
+                        if ((parseInt(rollStrings[i] || '0', 10) || 0) > 0) lastFilled = i; 
+                      }
                       const effectiveLen = Math.max(3, lastFilled + 1);
                       setHpLevelsShown(effectiveLen);
                       setHpDieDraft(char.hpDie || 12);
@@ -9901,15 +9922,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               if (!canEdit) return;
                               const val = parseInt(e.target.value || '0', 10) || 0;
 
-                              // Update raw rolls (the textbox values)
+                              // Update raw rolls (just the base roll, no CON mod added here)
                               const nextRolls = rolls.slice();
                               nextRolls[i] = val > 0 ? String(val) : '';
                               setHpDraftRolls(nextRolls);
-
-                              // Update totals (raw + CON), stored in hpDraftLevels
-                              const nextLevels = levels.slice();
-                              nextLevels[i] = val > 0 ? Math.max(1, val + conMod) : 0;
-                              setHpDraftLevels(nextLevels);
                             }}
                             className={`flex-1 p-2 rounded text-white ${canEdit ? "bg-gray-700" : "bg-gray-900 text-gray-500 cursor-not-allowed"} ${isDrained ? 'opacity-50' : ''}`}
                             id={`hp-level-${i}`}
@@ -9954,27 +9970,36 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const conMod = calcMod(getAttributeTotal('con'));
                       const draftRolls = (Array.isArray(hpDraftRolls) && hpDraftRolls.length ? hpDraftRolls : ['', '', '']);
-                      const draft = draftRolls.map((v) => {
+                      
+                      // Store base rolls only (no CON mod)
+                      const baseRolls = draftRolls.map((v) => {
                         const raw = parseInt(v || '0', 10) || 0;
-                        if (raw <= 0) return 0;
-                        return Math.max(1, raw + conMod);
+                        return raw; // Just the roll, no CON mod
                       });
 
-                      // Trim trailing zero-levels so you don't "unlock" future levels by accident
+                      // Trim trailing zero-rolls so you don't "unlock" future levels by accident
                       let lastFilled = -1;
-                      for (let i = 0; i < draft.length; i++) {
-                        if ((Number(draft[i]) || 0) > 0) lastFilled = i;
+                      for (let i = 0; i < baseRolls.length; i++) {
+                        if ((Number(baseRolls[i]) || 0) > 0) lastFilled = i;
                       }
                       const effectiveLen = Math.max(3, lastFilled + 1);
-                      const trimmedHpByLevel = draft.slice(0, effectiveLen);
+                      const trimmedRolls = baseRolls.slice(0, effectiveLen);
+                      
+                      // Calculate total HP with current CON mod for display purposes
+                      const calculatedHP = trimmedRolls.reduce((sum, roll) => {
+                        const baseRoll = Number(roll) || 0;
+                        if (baseRoll <= 0) return sum;
+                        return sum + Math.max(1, baseRoll + conMod);
+                      }, 0);
 
                       const newBonus = modalForms.hpBonus || 0;
                       const newDie = Number(hpDieDraft) || 12;
-                      const newMaxHP = trimmedHpByLevel.reduce((sum, hp) => sum + (Number(hp) || 0), 0) + newBonus;
+                      const newMaxHP = calculatedHP + newBonus;
                       const newCurrentHP = Math.min(char.hp, newMaxHP);
 
                       updateChar({
-                        hpByLevel: trimmedHpByLevel,
+                        hpRollsByLevel: trimmedRolls,  // Store base rolls
+                        hpByLevel: trimmedRolls,  // Keep for backwards compat
                         hpBonus: newBonus,
                         hpDie: newDie,
                         maxHp: newMaxHP,
