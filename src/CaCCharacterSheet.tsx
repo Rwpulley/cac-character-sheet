@@ -3279,17 +3279,9 @@ if (editModal.type === 'acTracking' && char) {
   // Arcane Thief: permanent spells per day are limited by character level (and still obey grimoire capacity).
   // Compute directly here to avoid any ordering/TDZ issues.
   const getPermanentSpellLimit = () => {
-    // Arcane Thief: one retained spell per Arcane Thief level.
-    // In this app, class1 level is tracked as XP-derived currentLevel (see calculateNextLevel()).
-    const c1 = String(char?.class1 || char?.class1Name || '').toLowerCase();
-    const c2 = String(char?.class2 || char?.class2Name || '').toLowerCase();
+    // Retained spells: one per character level (regardless of class)
+    // Use XP-derived level from calculateNextLevel
     const derivedLevel = (typeof calculateNextLevel === 'function' ? (calculateNextLevel().currentLevel || 1) : 1);
-    const class2Level = parseInt(char?.class2Level ?? 0, 10) || 0;
-
-    if (c1.includes('arcane thief')) return Math.max(0, derivedLevel);
-    if (c2.includes('arcane thief')) return Math.max(0, class2Level);
-
-    // Fallback: legacy behavior for non-Arcane Thief characters.
     return Math.max(1, derivedLevel);
   };
 
@@ -5973,7 +5965,7 @@ if (editModal.type === 'acTracking' && char) {
                                           const limit = getPermanentSpellLimit();
                                           const current = countPermanentSpells(grimoire.id);
                                           if (current >= limit) {
-                                            showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current Arcane Thief level.`);
+                                            showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current level.`);
                                             return;
                                           }
                                         }
