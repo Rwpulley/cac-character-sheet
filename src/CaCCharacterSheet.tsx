@@ -1304,6 +1304,11 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [invSelectedSpellId, setInvSelectedSpellId] = useState("");
   const [invCopies, setInvCopies] = useState(1);
   const [invPermanent, setInvPermanent] = useState(false);
+  
+  // State for collapsible spell descriptions
+  const [expandedPreparedSpells, setExpandedPreparedSpells] = useState(() => ({}));
+  const [expandedGrimoireSpells, setExpandedGrimoireSpells] = useState(() => ({}));
+  const [expandedMagicItemSpells, setExpandedMagicItemSpells] = useState(() => ({}));
 
   // ===== CONSOLIDATED ITEM MODAL STATE =====
   // Groups all item form fields into a single state object for cleaner code
@@ -5510,9 +5515,9 @@ if (editModal.type === 'acTracking' && char) {
 
         {activeTab === 'magic' && !spellsLearnedView && !grimoireView && !magicInventoryView && selectedMagicItemId === null && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <h2 className="text-2xl font-bold">Magic</h2>
-  <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
                 <button
                   onClick={() => setEditModal({ type: 'magicInfo' })}
                   className="p-2 bg-gray-700 rounded hover:bg-gray-600"
@@ -5520,12 +5525,12 @@ if (editModal.type === 'acTracking' && char) {
                 >
                   <Info size={16} />
                 </button>
-              <button
-                onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); setMagicInventoryView(true); setSelectedMagicItemId(null); }}
-                className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 font-semibold"
-              >
-                Magic Inventory
-              </button>
+                <button
+                  onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); setMagicInventoryView(true); setSelectedMagicItemId(null); }}
+                  className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 font-semibold flex-1 sm:flex-none whitespace-nowrap"
+                >
+                  Magic Inventory
+                </button>
               </div>
             </div>
             
@@ -5605,7 +5610,7 @@ if (editModal.type === 'acTracking' && char) {
                         <div key={spell.id} className="bg-gray-800 p-3 rounded">
                           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                             <div className="font-bold text-lg">
-                              {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
+                              Level {spell.level} - {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
                             </div>
                             <div className="flex items-center gap-2">
                               <label className="flex items-center gap-1">
@@ -5636,25 +5641,38 @@ if (editModal.type === 'acTracking' && char) {
                             </div>
                           </div>
                           
-                          <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                          {/* Collapsible Description */}
+                          <button
+                            onClick={() => setExpandedPreparedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }))}
+                            className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
+                          >
+                            {expandedPreparedSpells[spell.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            Description
+                          </button>
                           
-                          <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                            <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
-                            <div><span className="text-gray-400">Range:</span> {spell.range}</div>
-                            <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
-                            <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
-                            <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
-                          </div>
-                          
-                          <div className="text-sm mb-2">
-                            <span className="text-gray-400">Components:</span> 
-                            {spell.verbal && ' V'}
-                            {spell.somatic && ' S'}
-                            {spell.material && ` M (${spell.materialDesc})`}
-                          </div>
-                          
-                          {spell.spellResistance && (
-                            <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
+                          {expandedPreparedSpells[spell.id] && (
+                            <>
+                              <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                              
+                              <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                                <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
+                                <div><span className="text-gray-400">Range:</span> {spell.range}</div>
+                                <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
+                                <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
+                                <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
+                              </div>
+                              
+                              <div className="text-sm mb-2">
+                                <span className="text-gray-400">Components:</span> 
+                                {spell.verbal && ' V'}
+                                {spell.somatic && ' S'}
+                                {spell.material && ` M (${spell.materialDesc})`}
+                              </div>
+                              
+                              {spell.spellResistance && (
+                                <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
+                              )}
+                            </>
                           )}
                           
                           {spell.hasDiceRoll && (
@@ -5776,16 +5794,16 @@ if (editModal.type === 'acTracking' && char) {
         
         {activeTab === 'magic' && grimoireView && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <h2 className="text-2xl font-bold">Grimoires</h2>
-              <div className="flex gap-2">
-                <button onClick={() => setGrimoireView(false)} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
+              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+                <button onClick={() => setGrimoireView(false)} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500 flex-1 sm:flex-none whitespace-nowrap">
                   ← Back to Magic
                 </button>
                 <button
                   onClick={resetPermanentSpellsForNewDay}
                   disabled={!hasAnyPermanent || !hasAnyUsedPermanentToday}
-                  className={`px-4 py-2 rounded font-semibold ${
+                  className={`px-4 py-2 rounded font-semibold flex-1 sm:flex-none whitespace-nowrap ${
                     hasAnyPermanent && hasAnyUsedPermanentToday
                       ? 'bg-blue-600 hover:bg-blue-700'
                       : 'bg-gray-700 text-gray-400 cursor-not-allowed'
@@ -5845,14 +5863,14 @@ if (editModal.type === 'acTracking' && char) {
 
               return (
                 <div key={grimoire.id} className="bg-gray-700 p-4 rounded-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="order-1 sm:order-1">
                       <div className="text-xl font-bold">{grimoire.name}</div>
                       <div className="text-sm text-gray-300">
                         {pointsLeft} points left (Capacity {grimoire.capacity || 39})
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 order-2 sm:order-2 flex-wrap sm:flex-nowrap">
                       <button
                         onClick={() =>
                           setOpenGrimoireIds((prev) => ({
@@ -5860,19 +5878,19 @@ if (editModal.type === 'acTracking' && char) {
                             [grimoire.id]: !prev?.[grimoire.id],
                           }))
                         }
-                        className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 text-sm font-semibold"
+                        className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 text-sm font-semibold flex-1 sm:flex-none"
                       >
                         {openGrimoireIds?.[grimoire.id] ? 'Close' : 'Open'}
                       </button>
                       <button
                         onClick={() => setEditModal({ type: 'addSpellToGrimoire', grimoireId: grimoire.id })}
-                        className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm"
+                        className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm flex-1 sm:flex-none"
                       >
                         Add Spell
                       </button>
                       <button
                         onClick={() => deleteGrimoire(grimoire.id)}
-                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 text-sm"
+                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 text-sm flex-1 sm:flex-none"
                       >
                         Delete
                       </button>
@@ -5954,25 +5972,38 @@ if (editModal.type === 'acTracking' && char) {
                               </div>
                             </div>
 
-                            <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                            {/* Collapsible Description */}
+                            <button
+                              onClick={() => setExpandedGrimoireSpells(prev => ({ ...prev, [`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`]: !prev[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] }))}
+                              className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
+                            >
+                              {expandedGrimoireSpells[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                              Description
+                            </button>
 
-                            <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                              <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
-                              <div><span className="text-gray-400">Range:</span> {spell.range}</div>
-                              <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
-                              <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
-                              <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
-                            </div>
+                            {expandedGrimoireSpells[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] && (
+                              <>
+                                <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
 
-                            <div className="text-sm mb-2">
-                              <span className="text-gray-400">Components:</span>
-                              {spell.verbal && ' V'}
-                              {spell.somatic && ' S'}
-                              {spell.material && ` M (${spell.materialDesc})`}
-                            </div>
+                                <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                                  <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
+                                  <div><span className="text-gray-400">Range:</span> {spell.range}</div>
+                                  <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
+                                  <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
+                                  <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
+                                </div>
 
-                            {spell.spellResistance && (
-                              <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
+                                <div className="text-sm mb-2">
+                                  <span className="text-gray-400">Components:</span>
+                                  {spell.verbal && ' V'}
+                                  {spell.somatic && ' S'}
+                                  {spell.material && ` M (${spell.materialDesc})`}
+                                </div>
+
+                                {spell.spellResistance && (
+                                  <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
+                                )}
+                              </>
                             )}
 
                             {spell.hasDiceRoll && (
@@ -6097,7 +6128,7 @@ if (editModal.type === 'acTracking' && char) {
       {activeTab === 'magic' && magicInventoryView && (
         <div className="space-y-4">
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <h2 className="text-2xl font-bold">Magic Inventory</h2>
               <button
                 onClick={() => { setMagicInventoryView(false); setSelectedMagicItemId(null); }}
@@ -6109,7 +6140,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={resetPermanentSpellsForNewDay}
-                className="px-3 py-2 text-sm bg-blue-600 rounded hover:bg-blue-700 font-semibold"
+                className="px-3 py-2 text-sm bg-blue-600 rounded hover:bg-blue-700 font-semibold flex-1 sm:flex-none"
               >
                 New Day
               </button>
@@ -6121,7 +6152,7 @@ if (editModal.type === 'acTracking' && char) {
                   updateItemModal({ isMagicCasting: true });
                   setEditModal({ type: 'newItem', fromMagicInventory: true });
                 }}
-                className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold"
+                className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold flex-1 sm:flex-none"
               >
                 + Add Magic Item
               </button>
@@ -6253,19 +6284,29 @@ if (editModal.type === 'acTracking' && char) {
                                         </div>
                                       </div>
 
-                                      {/* Spell Details */}
-                                      <div className="text-sm text-gray-300 space-y-2">
-                                        <div className="text-sm text-gray-300">{s.description}</div>
+                                      {/* Collapsible Spell Details */}
+                                      <button
+                                        onClick={() => setExpandedMagicItemSpells(prev => ({ ...prev, [`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`]: !prev[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] }))}
+                                        className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"
+                                      >
+                                        {expandedMagicItemSpells[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                        Description
+                                      </button>
 
-                                        <div className="grid grid-cols-2 gap-2 text-sm">
-                                          <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
-                                          <div><span className="text-gray-400">Range:</span> {s.range}</div>
-                                          <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
-                                          <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
-                                          <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
-                                          <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
+                                      {expandedMagicItemSpells[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] && (
+                                        <div className="text-sm text-gray-300 space-y-2">
+                                          <div className="text-sm text-gray-300">{s.description}</div>
+
+                                          <div className="grid grid-cols-2 gap-2 text-sm">
+                                            <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
+                                            <div><span className="text-gray-400">Range:</span> {s.range}</div>
+                                            <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
+                                            <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
+                                            <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
+                                            <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
+                                          </div>
                                         </div>
-                                      </div>
+                                      )}
 
                               
 
@@ -6728,13 +6769,13 @@ if (editModal.type === 'acTracking' && char) {
 
 {activeTab === 'magic' && spellsLearnedView && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <h2 className="text-2xl font-bold">Spells Learned</h2>
-              <div className="flex gap-2">
-                <button onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); }} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
+              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+                <button onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); }} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500 flex-1 sm:flex-none whitespace-nowrap">
                   ← Back to Magic
                 </button>
-                <button onClick={openNewSpellModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
+                <button onClick={openNewSpellModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700 flex-1 sm:flex-none whitespace-nowrap">
                   + Add Spell
                 </button>
               </div>
