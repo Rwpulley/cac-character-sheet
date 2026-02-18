@@ -5902,75 +5902,47 @@ if (editModal.type === 'acTracking' && char) {
                   )}
 
                   {openGrimoireIds?.[grimoire.id] && orderedGroups.length > 0 && (
-                    <div className="space-y-2">
-                      {orderedGroups.map(group => {
-                        const spell = group.spell;
-                        const cost = spellPointCost(spell.level);
+                    <div className="space-y-4">
+                      {/* Group spells by level */}
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => {
+                        const groupsAtLevel = orderedGroups.filter(g => g.spell?.level === level);
+                        if (groupsAtLevel.length === 0) return null;
+                        
                         return (
-                          <div key={`${spell.id}-${group.permanent ? 'perm' : 'cons'}`} className="bg-gray-800 p-3 rounded">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="font-bold text-lg">
-                                Lvl {spell.level} - {spell.name} {group.count > 1 && <span className="text-blue-400">x{group.count}</span>}
-                                <span className="text-xs text-gray-400 ml-2">({cost} pt each)</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <label className="flex items-center gap-1 text-xs">
-                                  <input
-                                    type="checkbox"
-                                    checked={group.permanent}
-                                    onChange={() => {
-                                      const makePermanent = !group.permanent;
-
-                                      // We only toggle ONE "copy" at a time. If the spell appears multiple times,
-                                      // making one copy permanent will create a separate permanent group.
-                                      const targetInstanceId = group.entryIds[0];
-                                      if (!targetInstanceId) return;
-
-                                      if (makePermanent) {
-                                        const limit = getPermanentSpellLimit();
-                                        const current = countPermanentSpells(grimoire.id);
-                                        if (current >= limit) {
-                                          showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current Arcane Thief level.`);
-                                          return;
-                                        }
-                                      }
-
-                                      const newGrimoires = (char.grimoires || []).map(g => {
-                                        if (g.id !== grimoire.id) return g;
-                                        const newEntries = (g.entries || []).map(e => {
-                                          if (e.instanceId !== targetInstanceId) return e;
-                                          return {
-                                            ...e,
-                                            permanent: makePermanent,
-                                            usedToday: makePermanent ? false : false
-                                          };
-                                        });
-                                        return { ...g, entries: newEntries };
-                                      });
-                                      updateChar({ grimoires: newGrimoires });
-                                    }}
-                                    className="w-4 h-4"
-                                  />
-                                  Permanent
-                                </label>
-                                <button
-                                  onClick={() => {
-                                    // cast one instance
-                                    const entryId = group.entryIds[0];
-                                    const entry = (grimoire.entries || []).find(e => e.instanceId === entryId);
-                                    if (entry) castFromGrimoire(grimoire.id, entry);
-                                  }}
-                                  className={`px-4 py-2 rounded font-bold ${
-                                    group.permanent && group.usedToday
-                                      ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
-                                      : 'bg-red-600 hover:bg-red-700'
-                                  }`}
-                                  disabled={false}
-                                >
-                                  Cast
-                                </button>
-                              </div>
-                            </div>
+                          <div key={level}>
+                            <h4 className="font-bold text-lg mb-2 text-blue-400">
+                              Level {level}
+                            </h4>
+                            <div className="space-y-2">
+                              {groupsAtLevel.map(group => {
+                                const spell = group.spell;
+                                const cost = spellPointCost(spell.level);
+                                return (
+                                  <div key={`${spell.id}-${group.permanent ? 'perm' : 'cons'}`} className="bg-gray-800 p-3 rounded">
+                                    <div className="flex items-start justify-between mb-2 gap-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-lg">
+                                          {spell.name} {group.count > 1 && <span className="text-blue-400">x{group.count}</span>}
+                                        </div>
+                                        <div className="text-xs text-gray-400">({cost} pt each)</div>
+                                      </div>
+                                      <button
+                                        onClick={() => {
+                                          // cast one instance
+                                          const entryId = group.entryIds[0];
+                                          const entry = (grimoire.entries || []).find(e => e.instanceId === entryId);
+                                          if (entry) castFromGrimoire(grimoire.id, entry);
+                                        }}
+                                        className={`px-4 py-2 rounded font-bold flex-shrink-0 whitespace-nowrap ${
+                                          group.permanent && group.usedToday
+                                            ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
+                                            : 'bg-red-600 hover:bg-red-700'
+                                        }`}
+                                        disabled={false}
+                                      >
+                                        Cast
+                                      </button>
+                                    </div>
 
                             {/* Collapsible Description */}
                             <button
@@ -5983,6 +5955,49 @@ if (editModal.type === 'acTracking' && char) {
 
                             {expandedGrimoireSpells[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] && (
                               <>
+                                {/* Permanent checkbox at top of expanded section */}
+                                <div className="mb-3 pb-3 border-b border-gray-700">
+                                  <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={group.permanent}
+                                      onChange={() => {
+                                        const makePermanent = !group.permanent;
+
+                                        // We only toggle ONE "copy" at a time. If the spell appears multiple times,
+                                        // making one copy permanent will create a separate permanent group.
+                                        const targetInstanceId = group.entryIds[0];
+                                        if (!targetInstanceId) return;
+
+                                        if (makePermanent) {
+                                          const limit = getPermanentSpellLimit();
+                                          const current = countPermanentSpells(grimoire.id);
+                                          if (current >= limit) {
+                                            showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current Arcane Thief level.`);
+                                            return;
+                                          }
+                                        }
+
+                                        const newGrimoires = (char.grimoires || []).map(g => {
+                                          if (g.id !== grimoire.id) return g;
+                                          const newEntries = (g.entries || []).map(e => {
+                                            if (e.instanceId !== targetInstanceId) return e;
+                                            return {
+                                              ...e,
+                                              permanent: makePermanent,
+                                              usedToday: makePermanent ? false : false
+                                            };
+                                          });
+                                          return { ...g, entries: newEntries };
+                                        });
+                                        updateChar({ grimoires: newGrimoires });
+                                      }}
+                                      className="w-4 h-4"
+                                    />
+                                    <span className="font-semibold">Permanent</span>
+                                  </label>
+                                </div>
+
                                 <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
 
                                 <div className="grid grid-cols-2 gap-2 text-sm mb-2">
@@ -6118,7 +6133,11 @@ if (editModal.type === 'acTracking' && char) {
                         );
                       })}
                     </div>
-                  )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
                 </div>
               );
             })}
