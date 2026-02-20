@@ -13042,6 +13042,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           className="w-full p-2 bg-gray-700 rounded text-white text-sm mb-2"
                         >
                           <option value="">Select dice...</option>
+                          <option value="d2">d2</option>
                           <option value="d3">d3</option>
                           <option value="d4">d4</option>
                           <option value="d6">d6</option>
