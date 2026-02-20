@@ -123,6 +123,7 @@ interface Spell {
   spellResistance?: boolean;
   hasDiceRoll?: boolean;
   diceType?: string;
+  perLevelBonus?: number;  // Bonus per caster level (e.g., 1 = +1 per level, 2 = +2 per level)
   verbal?: boolean;
   somatic?: boolean;
   material?: boolean;
@@ -1632,6 +1633,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     spellResistance: false,
     hasDiceRoll: false,
     diceType: '',
+    perLevelBonus: 0,
     diceBonus: 0,
     verbal: false,
     somatic: false,
@@ -1647,7 +1649,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     setSpellForm({
       name: '', level: 0, description: '', prepTime: '', range: '', duration: '',
       aoe: '', savingThrow: '', spellResistance: false, hasDiceRoll: false,
-      diceType: '', diceBonus: 0, verbal: false, somatic: false, material: false, materialDesc: ''
+      diceType: '', perLevelBonus: 0, diceBonus: 0, verbal: false, somatic: false, material: false, materialDesc: ''
     });
   }, []);
 
@@ -3132,6 +3134,7 @@ if (editModal.type === 'acTracking' && char) {
         spellResistance: !!editModal.spell.spellResistance,
         hasDiceRoll: !!editModal.spell.hasDiceRoll,
         diceType: editModal.spell.diceType || '',
+        perLevelBonus: Number(editModal.spell.perLevelBonus) || 0,
         diceBonus: Number(editModal.spell.diceBonus) || 0,
         verbal: !!editModal.spell.verbal,
         somatic: !!editModal.spell.somatic,
@@ -3158,6 +3161,7 @@ if (editModal.type === 'acTracking' && char) {
         spellResistance: !!spell.spellResistance,
         hasDiceRoll: !!spell.hasDiceRoll,
         diceType: spell.diceType || '',
+        perLevelBonus: Number(spell.perLevelBonus) || 0,
         verbal: !!spell.verbal,
         somatic: !!spell.somatic,
         material: !!spell.material,
@@ -5711,16 +5715,21 @@ if (editModal.type === 'acTracking' && char) {
                                     onClick={() => {
                                       const numDice = char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1;
                                       const diceValue = parseInt(spell.diceType.replace('d', ''));
+                                      const perLevelBonus = Number(spell.perLevelBonus) || 0;
+                                      const currentLevel = calculateNextLevel().currentLevel || 1;
+                                      const levelBonus = perLevelBonus * currentLevel;
+                                      
                                       const rolls = [];
                                       for (let i = 0; i < numDice; i++) {
                                         rolls.push(rollDice(diceValue));
                                       }
-                                      const total = rolls.reduce((a, b) => a + b, 0);
-                                      setRollResult({ rolls, total });
+                                      const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                      const total = diceTotal + levelBonus;
+                                      setRollResult({ rolls, total, levelBonus });
                                     }}
                                     className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                   >
-                                    Roll {char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}{spell.diceType}
+                                    Roll {char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}{spell.diceType}{spell.perLevelBonus ? ` +${spell.perLevelBonus}/lvl` : ''}
                                   </button>
                                   <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                   {(() => {
@@ -5745,8 +5754,12 @@ if (editModal.type === 'acTracking' && char) {
                                           onClick={() => {
                                             const rolls = diceValues.slice(0, numDice);
                                             if (rolls.every(r => r > 0)) {
-                                              const total = rolls.reduce((a, b) => a + b, 0);
-                                              setRollResult({ rolls, total });
+                                              const perLevelBonus = Number(spell.perLevelBonus) || 0;
+                                              const currentLevel = calculateNextLevel().currentLevel || 1;
+                                              const levelBonus = perLevelBonus * currentLevel;
+                                              const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                              const total = diceTotal + levelBonus;
+                                              setRollResult({ rolls, total, levelBonus });
                                             }
                                           }}
                                           className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -5758,7 +5771,10 @@ if (editModal.type === 'acTracking' && char) {
                                   })()}
                                   {rollResult?.rolls && (
                                     <div className="mt-1 text-center text-sm">
-                                      <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
+                                      <div>
+                                        Dice: {rollResult.rolls.join(' + ')} = {rollResult.rolls.reduce((a, b) => a + b, 0)}
+                                        {rollResult.levelBonus !== undefined && rollResult.levelBonus !== null && ` + ${rollResult.levelBonus} (level bonus)`}
+                                      </div>
                                       <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
                                     </div>
                                   )}
@@ -6068,14 +6084,19 @@ if (editModal.type === 'acTracking' && char) {
                                         const entry = (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0]);
                                         const numDice = entry?.numDice || 1;
                                         const diceValue = parseInt((spell.diceType || 'd6').replace('d', ''));
+                                        const perLevelBonus = Number(spell.perLevelBonus) || 0;
+                                        const currentLevel = calculateNextLevel().currentLevel || 1;
+                                        const levelBonus = perLevelBonus * currentLevel;
+                                        
                                         const rolls = [];
                                         for (let i = 0; i < numDice; i++) rolls.push(rollDice(diceValue));
-                                        const total = rolls.reduce((a, b) => a + b, 0);
-                                        setRollResult({ rolls, total });
+                                        const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                        const total = diceTotal + levelBonus;
+                                        setRollResult({ rolls, total, levelBonus });
                                       }}
                                       className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                     >
-                                      Roll {(grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1}{spell.diceType}
+                                      Roll {(grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1}{spell.diceType}{spell.perLevelBonus ? ` +${spell.perLevelBonus}/lvl` : ''}
                                     </button>
                                     <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                     {(() => {
@@ -6101,8 +6122,12 @@ if (editModal.type === 'acTracking' && char) {
                                             onClick={() => {
                                               const rolls = diceValues.slice(0, numDice);
                                               if (rolls.every(r => r > 0)) {
-                                                const total = rolls.reduce((a, b) => a + b, 0);
-                                                setRollResult({ rolls, total });
+                                                const perLevelBonus = Number(spell.perLevelBonus) || 0;
+                                                const currentLevel = calculateNextLevel().currentLevel || 1;
+                                                const levelBonus = perLevelBonus * currentLevel;
+                                                const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                                const total = diceTotal + levelBonus;
+                                                setRollResult({ rolls, total, levelBonus });
                                               }
                                             }}
                                             className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -6356,16 +6381,21 @@ if (editModal.type === 'acTracking' && char) {
                                                   onClick={() => {
                                                     const numDice = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
                                                     const diceValue = parseInt(String(s.diceType || 'd0').replace('d', '')) || 0;
+                                                    const perLevelBonus = Number(s.perLevelBonus) || 0;
+                                                    const currentLevel = calculateNextLevel().currentLevel || 1;
+                                                    const levelBonus = perLevelBonus * currentLevel;
+                                                    
                                                     const rolls = [];
                                                     for (let i = 0; i < numDice; i++) {
                                                       rolls.push(rollDice(diceValue));
                                                     }
-                                                    const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
-                                                    setRollResult({ rolls, total });
+                                                    const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                                    const total = diceTotal + (Number(s.diceBonus) || 0) + levelBonus;
+                                                    setRollResult({ rolls, total, levelBonus });
                                                   }}
                                                   className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                                 >
-                                                  Roll {Number(g.entries?.[0]?.numDice || 1)}{s.diceType}
+                                                  Roll {Number(g.entries?.[0]?.numDice || 1)}{s.diceType}{s.perLevelBonus ? ` +${s.perLevelBonus}/lvl` : ''}
                                                 </button>
                                                 <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                                 {(() => {
@@ -6390,8 +6420,12 @@ if (editModal.type === 'acTracking' && char) {
                                                         onClick={() => {
                                                           const rolls = diceValues.slice(0, numDice);
                                                           if (rolls.every(r => r > 0)) {
-                                                            const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
-                                                            setRollResult({ rolls, total });
+                                                            const perLevelBonus = Number(s.perLevelBonus) || 0;
+                                                            const currentLevel = calculateNextLevel().currentLevel || 1;
+                                                            const levelBonus = perLevelBonus * currentLevel;
+                                                            const diceTotal = rolls.reduce((a, b) => a + b, 0);
+                                                            const total = diceTotal + (Number(s.diceBonus) || 0) + levelBonus;
+                                                            setRollResult({ rolls, total, levelBonus });
                                                           }
                                                         }}
                                                         className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -6403,7 +6437,10 @@ if (editModal.type === 'acTracking' && char) {
                                                 })()}
                                                 {rollResult?.rolls && (
                                                   <div className="mt-1 text-center text-sm">
-                                                    <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
+                                                    <div>
+                                                      Dice: {rollResult.rolls.join(' + ')} = {rollResult.rolls.reduce((a, b) => a + b, 0)}
+                                                      {rollResult.levelBonus > 0 && ` + ${rollResult.levelBonus} (level bonus)`}
+                                                    </div>
                                                     <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
                                                   </div>
                                                 )}
@@ -12997,12 +13034,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <span className="text-sm">Has Dice Roll</span>
                     </label>
                     {spellForm.hasDiceRoll && (
-                      <div>
+                      <>
                         <label className="block text-xs text-gray-400 mb-1">Dice Type</label>
                         <select
                           value={spellForm.diceType}
                           onChange={(e) => updateSpellForm({ diceType: e.target.value })}
-                          className="w-full p-2 bg-gray-700 rounded text-white text-sm"
+                          className="w-full p-2 bg-gray-700 rounded text-white text-sm mb-2"
                         >
                           <option value="">Select dice...</option>
                           <option value="d3">d3</option>
@@ -13012,7 +13049,24 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <option value="d10">d10</option>
                           <option value="d12">d12</option>
                         </select>
-                      </div>
+                        
+                        <label className="block text-xs text-gray-400 mb-1">Bonus Per Caster Level</label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-300">+</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={spellForm.perLevelBonus === 0 ? '' : spellForm.perLevelBonus}
+                            onChange={(e) => updateSpellForm({ perLevelBonus: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0) })}
+                            placeholder="0"
+                            className="w-20 p-2 bg-gray-700 rounded text-white text-sm text-center"
+                          />
+                          <span className="text-sm text-gray-300">per level</span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1">
+                          Example: 1 = +1 per level, so at level 5 you'd get +5 to the roll
+                        </div>
+                      </>
                     )}
                   </div>
                   
@@ -13072,6 +13126,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         spellResistance: spellForm.spellResistance,
                         hasDiceRoll: spellForm.hasDiceRoll,
                         diceType: spellForm.diceType,
+                        perLevelBonus: spellForm.perLevelBonus,
                         verbal: spellForm.verbal,
                         somatic: spellForm.somatic,
                         material: spellForm.material,
