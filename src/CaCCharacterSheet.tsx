@@ -1309,6 +1309,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [expandedPreparedSpells, setExpandedPreparedSpells] = useState(() => ({}));
   const [expandedGrimoireSpells, setExpandedGrimoireSpells] = useState(() => ({}));
   const [expandedMagicItemSpells, setExpandedMagicItemSpells] = useState(() => ({}));
+  const [expandedLearnedSpells, setExpandedLearnedSpells] = useState(() => ({}));
 
   // ===== CONSOLIDATED ITEM MODAL STATE =====
   // Groups all item form fields into a single state object for cleaner code
@@ -6829,20 +6830,9 @@ if (editModal.type === 'acTracking' && char) {
                             
                             return (
                               <div key={spell.id} className="bg-gray-800 p-3 rounded">
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <div className="font-bold">{spell.name}</div>
-                                      <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
-                                        <Edit2 size={12} />
-                                      </button>
-                                    </div>
-                                    <div className="text-sm text-gray-400">
-                                      {spell.prepTime} • {spell.range} • {spell.duration}
-                                      {spell.verbal && ' • V'}{spell.somatic && 'S'}{spell.material && 'M'}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2">
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                  <div className="font-bold text-lg flex-1 min-w-0">{spell.name}</div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
                                     {preparedCount > 0 && (
                                       <>
                                         <button
@@ -6856,6 +6846,7 @@ if (editModal.type === 'acTracking' && char) {
                                             }
                                           }}
                                           className="p-1 bg-red-600 rounded hover:bg-red-700"
+                                          title="Remove from Spells Prepared"
                                         >
                                           <Minus size={14} />
                                         </button>
@@ -6872,11 +6863,53 @@ if (editModal.type === 'acTracking' && char) {
                                       }}
                                       disabled={!canPrepare}
                                       className={`p-1 rounded ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
+                                      title="Add to Spells Prepared"
                                     >
                                       <Plus size={14} />
                                     </button>
+                                    <button 
+                                      onClick={() => setEditModal({ type: 'editSpell', spell })} 
+                                      className="p-1 bg-gray-600 rounded hover:bg-gray-500"
+                                      title="Edit Spell"
+                                    >
+                                      <Edit2 size={14} />
+                                    </button>
                                   </div>
                                 </div>
+                                
+                                {/* Collapsible Description */}
+                                <button
+                                  onClick={() => setExpandedLearnedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }))}
+                                  className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
+                                >
+                                  {expandedLearnedSpells[spell.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                  Description
+                                </button>
+                                
+                                {expandedLearnedSpells[spell.id] && (
+                                  <>
+                                    <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                                    
+                                    <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                                      <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
+                                      <div><span className="text-gray-400">Range:</span> {spell.range}</div>
+                                      <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
+                                      <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
+                                      <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
+                                    </div>
+                                    
+                                    <div className="text-sm mb-2">
+                                      <span className="text-gray-400">Components:</span>
+                                      {spell.verbal && ' V'}
+                                      {spell.somatic && ' S'}
+                                      {spell.material && ` M (${spell.materialDesc})`}
+                                    </div>
+                                    
+                                    {spell.spellResistance && (
+                                      <div className="text-xs text-yellow-400">Spell Resistance: Yes</div>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             );
                           })}
