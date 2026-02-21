@@ -5439,8 +5439,8 @@ if (editModal.type === 'acTracking' && char) {
                   const encStatus = getEncumbranceStatus();
                   const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
                   const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
-                  // Save = Level + Prime + Save Modifier + Encumbrance Penalty (NO attribute mod)
-                  const total = level + prime + saveModifier + encDexPenalty;
+                  // Save = Level + Mod + Prime + Save Modifier + Encumbrance Penalty
+                  const total = level + mod + prime + saveModifier + encDexPenalty;
                   
                   return (
                     <div key={key} className="bg-gray-700 p-4 rounded">
@@ -5454,6 +5454,7 @@ if (editModal.type === 'acTracking' && char) {
                           </div>
                           <div className="text-base space-y-1">
                             <div>Level: +{level}</div>
+                            <div>Mod: {mod >= 0 ? '+' : ''}{mod}</div>
                             <div>Prime: +{prime}</div>
                             {key === 'dex' && encStatus === 'burdened' && (
                               <div>Burdened: -2</div>
