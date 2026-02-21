@@ -4427,8 +4427,25 @@ if (editModal.type === 'acTracking' && char) {
                     Edit HP
                   </button>
                   <button onClick={() => {
-                      // Use hpRollsByLevel if available (new system), otherwise try hpByLevel (old system)
-                      const rolls = char.hpRollsByLevel || char.hpByLevel || [0, 0, 0];
+                      // Use hpRollsByLevel if available (new system)
+                      // If using old hpByLevel data, subtract CON mod to get base rolls
+                      const conMod = calcMod(getAttributeTotal('con'));
+                      let rolls;
+                      
+                      if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
+                        // New system - already has base rolls
+                        rolls = char.hpRollsByLevel;
+                      } else if (char.hpByLevel && char.hpByLevel.length > 0) {
+                        // Old system - subtract CON mod to get base rolls
+                        rolls = char.hpByLevel.map(total => {
+                          if (total <= 0) return 0;
+                          // Subtract CON mod to get the original roll (minimum 1)
+                          return Math.max(1, total - conMod);
+                        });
+                      } else {
+                        rolls = [0, 0, 0];
+                      }
+                      
                       const padded = rolls.slice();
                       while (padded.length < 3) padded.push(0);
                       
@@ -5422,7 +5439,8 @@ if (editModal.type === 'acTracking' && char) {
                   const encStatus = getEncumbranceStatus();
                   const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
                   const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
-                  const total = level + mod + prime + saveModifier + encDexPenalty;
+                  // Save = Level + Prime + Save Modifier + Encumbrance Penalty (NO attribute mod)
+                  const total = level + prime + saveModifier + encDexPenalty;
                   
                   return (
                     <div key={key} className="bg-gray-700 p-4 rounded">
@@ -5436,7 +5454,6 @@ if (editModal.type === 'acTracking' && char) {
                           </div>
                           <div className="text-base space-y-1">
                             <div>Level: +{level}</div>
-                            <div>Mod: {mod >= 0 ? '+' : ''}{mod}</div>
                             <div>Prime: +{prime}</div>
                             {key === 'dex' && encStatus === 'burdened' && (
                               <div>Burdened: -2</div>
