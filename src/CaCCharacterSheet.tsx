@@ -123,7 +123,6 @@ interface Spell {
   spellResistance?: boolean;
   hasDiceRoll?: boolean;
   diceType?: string;
-  perLevelBonus?: number;  // Bonus per caster level (e.g., 1 = +1 per level, 2 = +2 per level)
   verbal?: boolean;
   somatic?: boolean;
   material?: boolean;
@@ -184,7 +183,6 @@ interface Character {
   hp: number;
   maxHpBonus: number;
   hpByLevel: number[];
-  hpRollsByLevel?: number[];  // Stores just the base roll for each level (without CON mod)
   levelDrained?: boolean[];  // Track which levels are drained (unchecked = drained)
   hpDie: number;
   ac: number;
@@ -1125,7 +1123,6 @@ const createNewCharacter = (): Character => ({
   },
   xpTable: [0, 2000, 4000, 8000, 16000, 32000, 64000, 120000, 240000, 360000, 480000, 600000, 720000, 840000, 960000, 1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1800000, 1920000, 2040000, 2160000],
   hpByLevel: [0, 0, 0],
-  hpRollsByLevel: [0, 0, 0],
   hpDie: 12,
   attacks: [], 
   inventory: [], 
@@ -1305,6 +1302,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const [invSelectedSpellId, setInvSelectedSpellId] = useState("");
   const [invCopies, setInvCopies] = useState(1);
   const [invPermanent, setInvPermanent] = useState(false);
+  
+  // State for collapsible grimoire spell levels
+  const [expandedGrimoireLevels, setExpandedGrimoireLevels] = useState(() => ({}));
   
   // State for collapsible spell descriptions
   const [expandedPreparedSpells, setExpandedPreparedSpells] = useState(() => ({}));
@@ -1633,7 +1633,6 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     spellResistance: false,
     hasDiceRoll: false,
     diceType: '',
-    perLevelBonus: 0,
     diceBonus: 0,
     verbal: false,
     somatic: false,
@@ -1649,7 +1648,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     setSpellForm({
       name: '', level: 0, description: '', prepTime: '', range: '', duration: '',
       aoe: '', savingThrow: '', spellResistance: false, hasDiceRoll: false,
-      diceType: '', perLevelBonus: 0, diceBonus: 0, verbal: false, somatic: false, material: false, materialDesc: ''
+      diceType: '', diceBonus: 0, verbal: false, somatic: false, material: false, materialDesc: ''
     });
   }, []);
 
@@ -2321,36 +2320,18 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     };
   }, [char?.xpTable, char?.currentXp, char?.levelDrained, char?.hpByLevel]);
 
-  // Memoized max HP calculation (accounts for level drain and dynamically applies CON mod)
+  // Memoized max HP calculation (accounts for level drain)
   const memoizedMaxHP = useMemo(() => {
-    if (!char) return char?.maxHp || 0;
-    
-    // Calculate current CON modifier
-    const conAttr = char.attributes?.con;
-    if (!conAttr) return char?.maxHp || 0;
-    
-    const conTotal = (conAttr.rolledScore || 10) + (conAttr.raceBonus || 0) + (conAttr.bonusMod || 0);
-    const conMod = Math.floor((conTotal - 10) / 2);
-    
-    // Use hpRollsByLevel if available (new system), otherwise fall back to hpByLevel (old system)
-    const rolls = char.hpRollsByLevel || char.hpByLevel || [];
+    if (!char || !char.hpByLevel) return char?.maxHp || 0;
     const levelDrained = char.levelDrained || [];
-    
-    // Sum HP from non-drained levels: base roll + CON mod per level
-    const levelHP = rolls.reduce((sum, roll, idx) => {
+    // Only sum HP from levels that are NOT drained (drained = true means level is lost)
+    const levelHP = char.hpByLevel.reduce((sum, hp, idx) => {
       const isDrained = levelDrained[idx] === true;
-      if (isDrained) return sum;
-      
-      const baseRoll = Number(roll) || 0;
-      if (baseRoll <= 0) return sum;
-      
-      // Apply CON mod to each level's roll (minimum 1 HP per level)
-      return sum + Math.max(1, baseRoll + conMod);
+      return sum + (isDrained ? 0 : hp);
     }, 0);
-    
     const bonusHP = char.hpBonus || 0;
     return levelHP + bonusHP;
-  }, [char?.hpRollsByLevel, char?.hpByLevel, char?.hpBonus, char?.levelDrained, char?.attributes?.con]);
+  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp, char?.levelDrained]);
   
   // Calculate effective level (actual level minus drained levels)
   const effectiveLevel = useMemo(() => {
@@ -3134,7 +3115,6 @@ if (editModal.type === 'acTracking' && char) {
         spellResistance: !!editModal.spell.spellResistance,
         hasDiceRoll: !!editModal.spell.hasDiceRoll,
         diceType: editModal.spell.diceType || '',
-        perLevelBonus: Number(editModal.spell.perLevelBonus) || 0,
         diceBonus: Number(editModal.spell.diceBonus) || 0,
         verbal: !!editModal.spell.verbal,
         somatic: !!editModal.spell.somatic,
@@ -3161,7 +3141,6 @@ if (editModal.type === 'acTracking' && char) {
         spellResistance: !!spell.spellResistance,
         hasDiceRoll: !!spell.hasDiceRoll,
         diceType: spell.diceType || '',
-        perLevelBonus: Number(spell.perLevelBonus) || 0,
         verbal: !!spell.verbal,
         somatic: !!spell.somatic,
         material: !!spell.material,
@@ -3284,9 +3263,17 @@ if (editModal.type === 'acTracking' && char) {
   // Arcane Thief: permanent spells per day are limited by character level (and still obey grimoire capacity).
   // Compute directly here to avoid any ordering/TDZ issues.
   const getPermanentSpellLimit = () => {
-    // Retained spells: one per character level (regardless of class)
-    // Use XP-derived level from calculateNextLevel
+    // Arcane Thief: one retained spell per Arcane Thief level.
+    // In this app, class1 level is tracked as XP-derived currentLevel (see calculateNextLevel()).
+    const c1 = String(char?.class1 || char?.class1Name || '').toLowerCase();
+    const c2 = String(char?.class2 || char?.class2Name || '').toLowerCase();
     const derivedLevel = (typeof calculateNextLevel === 'function' ? (calculateNextLevel().currentLevel || 1) : 1);
+    const class2Level = parseInt(char?.class2Level ?? 0, 10) || 0;
+
+    if (c1.includes('arcane thief')) return Math.max(0, derivedLevel);
+    if (c2.includes('arcane thief')) return Math.max(0, class2Level);
+
+    // Fallback: legacy behavior for non-Arcane Thief characters.
     return Math.max(1, derivedLevel);
   };
 
@@ -4427,39 +4414,21 @@ if (editModal.type === 'acTracking' && char) {
                     Edit HP
                   </button>
                   <button onClick={() => {
-                      // Use hpRollsByLevel if available (new system)
-                      // If using old hpByLevel data, subtract CON mod to get base rolls
-                      const conMod = calcMod(getAttributeTotal('con'));
-                      let rolls;
-                      
-                      if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
-                        // New system - already has base rolls
-                        rolls = char.hpRollsByLevel;
-                      } else if (char.hpByLevel && char.hpByLevel.length > 0) {
-                        // Old system - subtract CON mod to get base rolls
-                        rolls = char.hpByLevel.map(total => {
-                          if (total <= 0) return 0;
-                          // Subtract CON mod to get the original roll (minimum 1)
-                          return Math.max(1, total - conMod);
-                        });
-                      } else {
-                        rolls = [0, 0, 0];
-                      }
-                      
-                      const padded = rolls.slice();
+                      const levels = (char.hpByLevel && char.hpByLevel.length) ? char.hpByLevel : [0, 0, 0];
+                      const padded = levels.slice();
                       while (padded.length < 3) padded.push(0);
-                      
-                      // Convert to strings for the draft state
-                      const rollStrings = padded.map((v) => {
-                        const roll = Number(v) || 0;
-                        return roll > 0 ? String(roll) : '';
+                      setHpDraftLevels(padded);
+                      const conMod = calcMod(getAttributeTotal('con'));
+                      const rolls = padded.map((v) => {
+                        const total = Number(v) || 0;
+                        if (total <= 0) return '';
+                        const raw = total - conMod;
+                        return String(raw);
                       });
-                      setHpDraftRolls(rollStrings);
+                      setHpDraftRolls(rolls);
 
                       let lastFilled = -1;
-                      for (let i = 0; i < rollStrings.length; i++) { 
-                        if ((parseInt(rollStrings[i] || '0', 10) || 0) > 0) lastFilled = i; 
-                      }
+                      for (let i = 0; i < rolls.length; i++) { if ((parseInt(rolls[i] || '0', 10) || 0) > 0) lastFilled = i; }
                       const effectiveLen = Math.max(3, lastFilled + 1);
                       setHpLevelsShown(effectiveLen);
                       setHpDieDraft(char.hpDie || 12);
@@ -5439,7 +5408,6 @@ if (editModal.type === 'acTracking' && char) {
                   const encStatus = getEncumbranceStatus();
                   const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
                   const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
-                  // Save = Level + Mod + Prime + Save Modifier + Encumbrance Penalty
                   const total = level + mod + prime + saveModifier + encDexPenalty;
                   
                   return (
@@ -5530,9 +5498,9 @@ if (editModal.type === 'acTracking' && char) {
 
         {activeTab === 'magic' && !spellsLearnedView && !grimoireView && !magicInventoryView && selectedMagicItemId === null && (
           <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Magic</h2>
-              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+  <div className="flex gap-2">
                 <button
                   onClick={() => setEditModal({ type: 'magicInfo' })}
                   className="p-2 bg-gray-700 rounded hover:bg-gray-600"
@@ -5540,12 +5508,12 @@ if (editModal.type === 'acTracking' && char) {
                 >
                   <Info size={16} />
                 </button>
-                <button
-                  onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); setMagicInventoryView(true); setSelectedMagicItemId(null); }}
-                  className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 font-semibold flex-1 sm:flex-none whitespace-nowrap"
-                >
-                  Magic Inventory
-                </button>
+              <button
+                onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); setMagicInventoryView(true); setSelectedMagicItemId(null); }}
+                className="px-4 py-2 text-base bg-gray-600 rounded hover:bg-gray-500 font-semibold"
+              >
+                Magic Inventory
+              </button>
               </div>
             </div>
             
@@ -5625,7 +5593,7 @@ if (editModal.type === 'acTracking' && char) {
                         <div key={spell.id} className="bg-gray-800 p-3 rounded">
                           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                             <div className="font-bold text-lg">
-                              Level {spell.level} - {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
+                              {spell.name} {count > 1 && <span className="text-blue-400">x{count}</span>}
                             </div>
                             <div className="flex items-center gap-2">
                               <label className="flex items-center gap-1">
@@ -5656,15 +5624,17 @@ if (editModal.type === 'acTracking' && char) {
                             </div>
                           </div>
                           
-                          {/* Collapsible Description */}
+                          {/* Collapsible Details Button */}
                           <button
-                            onClick={() => setExpandedPreparedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }))}
-                            className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
+                            onClick={() => {
+                              setExpandedPreparedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }));
+                            }}
+                            className="text-sm text-blue-400 hover:text-blue-300 mb-2 flex items-center gap-1"
                           >
                             {expandedPreparedSpells[spell.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            Description
+                            Details
                           </button>
-                          
+
                           {expandedPreparedSpells[spell.id] && (
                             <>
                               <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
@@ -5687,12 +5657,10 @@ if (editModal.type === 'acTracking' && char) {
                               {spell.spellResistance && (
                                 <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
                               )}
-                            </>
-                          )}
-                          
-                          {spell.hasDiceRoll && (
-                            <div className="bg-gray-700 p-3 rounded mt-2">
-                              <div className="flex items-center gap-2 mb-2">
+                              
+                              {spell.hasDiceRoll && (
+                                <div className="bg-gray-700 p-3 rounded mt-2">
+                                  <div className="flex items-center gap-2 mb-2">
                                 <label className="text-sm text-gray-400">Number of Dice:</label>
                                 <input
                                   type="text" inputMode="numeric"
@@ -5733,21 +5701,16 @@ if (editModal.type === 'acTracking' && char) {
                                     onClick={() => {
                                       const numDice = char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1;
                                       const diceValue = parseInt(spell.diceType.replace('d', ''));
-                                      const perLevelBonus = Number(spell.perLevelBonus) || 0;
-                                      const currentLevel = calculateNextLevel().currentLevel || 1;
-                                      const levelBonus = perLevelBonus * currentLevel;
-                                      
                                       const rolls = [];
                                       for (let i = 0; i < numDice; i++) {
                                         rolls.push(rollDice(diceValue));
                                       }
-                                      const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                      const total = diceTotal + levelBonus;
-                                      setRollResult({ rolls, total, levelBonus });
+                                      const total = rolls.reduce((a, b) => a + b, 0);
+                                      setRollResult({ rolls, total });
                                     }}
                                     className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                   >
-                                    Roll {char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}{spell.diceType}{spell.perLevelBonus ? ` +${spell.perLevelBonus}/lvl` : ''}
+                                    Roll {char.spellsPrepared.find(s => s.prepId === prepIds[0])?.numDice || 1}{spell.diceType}
                                   </button>
                                   <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                   {(() => {
@@ -5772,12 +5735,8 @@ if (editModal.type === 'acTracking' && char) {
                                           onClick={() => {
                                             const rolls = diceValues.slice(0, numDice);
                                             if (rolls.every(r => r > 0)) {
-                                              const perLevelBonus = Number(spell.perLevelBonus) || 0;
-                                              const currentLevel = calculateNextLevel().currentLevel || 1;
-                                              const levelBonus = perLevelBonus * currentLevel;
-                                              const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                              const total = diceTotal + levelBonus;
-                                              setRollResult({ rolls, total, levelBonus });
+                                              const total = rolls.reduce((a, b) => a + b, 0);
+                                              setRollResult({ rolls, total });
                                             }
                                           }}
                                           className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -5789,16 +5748,15 @@ if (editModal.type === 'acTracking' && char) {
                                   })()}
                                   {rollResult?.rolls && (
                                     <div className="mt-1 text-center text-sm">
-                                      <div>
-                                        Dice: {rollResult.rolls.join(' + ')} = {rollResult.rolls.reduce((a, b) => a + b, 0)}
-                                        {rollResult.levelBonus !== undefined && rollResult.levelBonus !== null && ` + ${rollResult.levelBonus} (level bonus)`}
-                                      </div>
+                                      <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
                                       <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
                                     </div>
                                   )}
                                 </div>
                               )}
                             </div>
+                          )}
+                            </>
                           )}
                         </div>
                       ))}
@@ -5821,16 +5779,16 @@ if (editModal.type === 'acTracking' && char) {
         
         {activeTab === 'magic' && grimoireView && (
           <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Grimoires</h2>
-              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-                <button onClick={() => setGrimoireView(false)} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500 flex-1 sm:flex-none whitespace-nowrap">
+              <div className="flex gap-2">
+                <button onClick={() => setGrimoireView(false)} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
                   ← Back to Magic
                 </button>
                 <button
                   onClick={resetPermanentSpellsForNewDay}
                   disabled={!hasAnyPermanent || !hasAnyUsedPermanentToday}
-                  className={`px-4 py-2 rounded font-semibold flex-1 sm:flex-none whitespace-nowrap ${
+                  className={`px-4 py-2 rounded font-semibold ${
                     hasAnyPermanent && hasAnyUsedPermanentToday
                       ? 'bg-blue-600 hover:bg-blue-700'
                       : 'bg-gray-700 text-gray-400 cursor-not-allowed'
@@ -5890,14 +5848,14 @@ if (editModal.type === 'acTracking' && char) {
 
               return (
                 <div key={grimoire.id} className="bg-gray-700 p-4 rounded-lg space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div className="order-1 sm:order-1">
+                  <div className="flex items-center justify-between">
+                    <div>
                       <div className="text-xl font-bold">{grimoire.name}</div>
                       <div className="text-sm text-gray-300">
                         {pointsLeft} points left (Capacity {grimoire.capacity || 39})
                       </div>
                     </div>
-                    <div className="flex gap-2 order-2 sm:order-2 flex-wrap sm:flex-nowrap">
+                    <div className="flex gap-2">
                       <button
                         onClick={() =>
                           setOpenGrimoireIds((prev) => ({
@@ -5905,19 +5863,19 @@ if (editModal.type === 'acTracking' && char) {
                             [grimoire.id]: !prev?.[grimoire.id],
                           }))
                         }
-                        className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 text-sm font-semibold flex-1 sm:flex-none"
+                        className="px-3 py-2 bg-gray-600 rounded hover:bg-gray-500 text-sm font-semibold"
                       >
                         {openGrimoireIds?.[grimoire.id] ? 'Close' : 'Open'}
                       </button>
                       <button
                         onClick={() => setEditModal({ type: 'addSpellToGrimoire', grimoireId: grimoire.id })}
-                        className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm flex-1 sm:flex-none"
+                        className="px-3 py-2 bg-blue-600 rounded hover:bg-blue-700 text-sm"
                       >
                         Add Spell
                       </button>
                       <button
                         onClick={() => deleteGrimoire(grimoire.id)}
-                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 text-sm flex-1 sm:flex-none"
+                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 text-sm"
                       >
                         Delete
                       </button>
@@ -5935,96 +5893,68 @@ if (editModal.type === 'acTracking' && char) {
                         const groupsAtLevel = orderedGroups.filter(g => g.spell?.level === level);
                         if (groupsAtLevel.length === 0) return null;
                         
+                        const levelKey = `${grimoire.id}-level-${level}`;
+                        const isLevelExpanded = expandedGrimoireLevels[levelKey] !== false; // Default to expanded
+                        
                         return (
-                          <div key={level}>
-                            <h4 className="font-bold text-lg mb-2 text-blue-400">
-                              Level {level}
-                            </h4>
-                            <div className="space-y-2">
-                              {groupsAtLevel.map(group => {
-                                const spell = group.spell;
-                                const cost = spellPointCost(spell.level);
-                                return (
-                                  <div key={`${spell.id}-${group.permanent ? 'perm' : 'cons'}`} className="bg-gray-800 p-3 rounded">
-                                    <div className="flex items-start justify-between mb-2 gap-2">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="font-bold text-lg">
-                                          {spell.name} {group.count > 1 && <span className="text-blue-400">x{group.count}</span>}
-                                        </div>
-                                        <div className="text-xs text-gray-400">({cost} pt each)</div>
-                                      </div>
-                                      <button
-                                        onClick={() => {
-                                          // cast one instance
-                                          const entryId = group.entryIds[0];
-                                          const entry = (grimoire.entries || []).find(e => e.instanceId === entryId);
-                                          if (entry) castFromGrimoire(grimoire.id, entry);
-                                        }}
-                                        className={`px-4 py-2 rounded font-bold flex-shrink-0 whitespace-nowrap ${
-                                          group.permanent && group.usedToday
-                                            ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
-                                            : 'bg-red-600 hover:bg-red-700'
-                                        }`}
-                                        disabled={false}
-                                      >
-                                        Cast
-                                      </button>
-                                    </div>
+                          <div key={level} className="bg-gray-700 rounded-lg overflow-hidden">
+                            {/* Collapsible Level Header */}
+                            <div 
+                              className="p-3 cursor-pointer hover:bg-gray-600 transition-colors flex items-center justify-between"
+                              onClick={() => setExpandedGrimoireLevels(prev => ({ ...prev, [levelKey]: !isLevelExpanded }))}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span>{isLevelExpanded ? '▼' : '▶'}</span>
+                                <h4 className="font-bold text-lg text-blue-400">Level {level}</h4>
+                                <span className="text-gray-400 text-sm">({groupsAtLevel.length} spell{groupsAtLevel.length !== 1 ? 's' : ''})</span>
+                              </div>
+                            </div>
+                            
+                            {isLevelExpanded && (
+                              <div className="px-3 pb-3 space-y-2">
+                                {groupsAtLevel.map(group => {
+                        const spell = group.spell;
+                        const cost = spellPointCost(spell.level);
+                        return (
+                          <div key={`${spell.id}-${group.permanent ? 'perm' : 'cons'}`} className="bg-gray-800 p-3 rounded">
+                            <div className="flex items-center justify-between mb-2 gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-lg">
+                                  {spell.name} {group.count > 1 && <span className="text-blue-400">x{group.count}</span>}
+                                  <span className="text-xs text-gray-400 ml-2">({cost} pt each)</span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const entryId = group.entryIds[0];
+                                  const entry = (grimoire.entries || []).find(e => e.instanceId === entryId);
+                                  if (entry) castFromGrimoire(grimoire.id, entry);
+                                }}
+                                className={`px-4 py-2 rounded font-bold flex-shrink-0 ${
+                                  group.permanent && group.usedToday
+                                    ? 'bg-gray-700 text-gray-300 cursor-not-allowed'
+                                    : 'bg-red-600 hover:bg-red-700'
+                                }`}
+                                disabled={false}
+                              >
+                                Cast
+                              </button>
+                            </div>
 
-                            {/* Collapsible Description */}
+                            {/* Collapsible Details Button */}
                             <button
-                              onClick={() => setExpandedGrimoireSpells(prev => ({ ...prev, [`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`]: !prev[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] }))}
-                              className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
+                              onClick={() => {
+                                const key = `${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`;
+                                setExpandedGrimoireSpells(prev => ({ ...prev, [key]: !prev[key] }));
+                              }}
+                              className="text-sm text-blue-400 hover:text-blue-300 mb-2 flex items-center gap-1"
                             >
                               {expandedGrimoireSpells[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                              Description
+                              Details
                             </button>
 
                             {expandedGrimoireSpells[`${grimoire.id}-${spell.id}-${group.permanent ? 'p' : 'c'}`] && (
                               <>
-                                {/* Permanent checkbox at top of expanded section */}
-                                <div className="mb-3 pb-3 border-b border-gray-700">
-                                  <label className="flex items-center gap-2 text-sm">
-                                    <input
-                                      type="checkbox"
-                                      checked={group.permanent}
-                                      onChange={() => {
-                                        const makePermanent = !group.permanent;
-
-                                        // We only toggle ONE "copy" at a time. If the spell appears multiple times,
-                                        // making one copy permanent will create a separate permanent group.
-                                        const targetInstanceId = group.entryIds[0];
-                                        if (!targetInstanceId) return;
-
-                                        if (makePermanent) {
-                                          const limit = getPermanentSpellLimit();
-                                          const current = countPermanentSpells(grimoire.id);
-                                          if (current >= limit) {
-                                            showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current level.`);
-                                            return;
-                                          }
-                                        }
-
-                                        const newGrimoires = (char.grimoires || []).map(g => {
-                                          if (g.id !== grimoire.id) return g;
-                                          const newEntries = (g.entries || []).map(e => {
-                                            if (e.instanceId !== targetInstanceId) return e;
-                                            return {
-                                              ...e,
-                                              permanent: makePermanent,
-                                              usedToday: makePermanent ? false : false
-                                            };
-                                          });
-                                          return { ...g, entries: newEntries };
-                                        });
-                                        updateChar({ grimoires: newGrimoires });
-                                      }}
-                                      className="w-4 h-4"
-                                    />
-                                    <span className="font-semibold">Permanent</span>
-                                  </label>
-                                </div>
-
                                 <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
 
                                 <div className="grid grid-cols-2 gap-2 text-sm mb-2">
@@ -6039,18 +5969,54 @@ if (editModal.type === 'acTracking' && char) {
                                   <span className="text-gray-400">Components:</span>
                                   {spell.verbal && ' V'}
                                   {spell.somatic && ' S'}
-                                  {spell.material && ` M (${spell.materialDesc})`}
+                                  {spell.material && ' M'}
                                 </div>
 
-                                {spell.spellResistance && (
-                                  <div className="text-xs text-yellow-400 mb-2">Spell Resistance: Yes</div>
-                                )}
-                              </>
-                            )}
+                                <div className="text-sm mb-2">
+                                  <span className="text-gray-400">Spell Resistance:</span> {spell.spellResistance ? 'Yes' : 'No'}
+                                </div>
 
-                            {spell.hasDiceRoll && (
-                              <div className="bg-gray-700 p-3 rounded mt-2">
-                                <div className="flex items-center gap-2 mb-2">
+                                <label className="flex items-center gap-1 text-xs mb-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={group.permanent}
+                                    onChange={() => {
+                                      const makePermanent = !group.permanent;
+
+                                      const targetInstanceId = group.entryIds[0];
+                                      if (!targetInstanceId) return;
+
+                                      if (makePermanent) {
+                                        const limit = getPermanentSpellLimit();
+                                        const current = countPermanentSpells(grimoire.id);
+                                        if (current >= limit) {
+                                          showGameAlert('Retain Spell', `You have reached your retained spell limit (${limit}). You can retain ${limit} spell${limit === 1 ? '' : 's'} at your current Arcane Thief level.`);
+                                          return;
+                                        }
+                                      }
+
+                                      const newGrimoires = (char.grimoires || []).map(g => {
+                                        if (g.id !== grimoire.id) return g;
+                                        const newEntries = (g.entries || []).map(e => {
+                                          if (e.instanceId !== targetInstanceId) return e;
+                                          return {
+                                            ...e,
+                                            permanent: makePermanent,
+                                            usedToday: makePermanent ? false : false
+                                          };
+                                        });
+                                        return { ...g, entries: newEntries };
+                                      });
+                                      updateChar({ grimoires: newGrimoires });
+                                    }}
+                                    className="w-4 h-4"
+                                  />
+                                  Retain Spell (Permanent)
+                                </label>
+
+                                {spell.hasDiceRoll && (
+                                  <div className="bg-gray-700 p-3 rounded mt-2">
+                                    <div className="flex items-center gap-2 mb-2">
                                   <label className="text-sm text-gray-400">Number of Dice:</label>
                                   <input
                                     type="text" inputMode="numeric"
@@ -6102,19 +6068,14 @@ if (editModal.type === 'acTracking' && char) {
                                         const entry = (grimoire.entries || []).find(en => en.instanceId === group.entryIds[0]);
                                         const numDice = entry?.numDice || 1;
                                         const diceValue = parseInt((spell.diceType || 'd6').replace('d', ''));
-                                        const perLevelBonus = Number(spell.perLevelBonus) || 0;
-                                        const currentLevel = calculateNextLevel().currentLevel || 1;
-                                        const levelBonus = perLevelBonus * currentLevel;
-                                        
                                         const rolls = [];
                                         for (let i = 0; i < numDice; i++) rolls.push(rollDice(diceValue));
-                                        const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                        const total = diceTotal + levelBonus;
-                                        setRollResult({ rolls, total, levelBonus });
+                                        const total = rolls.reduce((a, b) => a + b, 0);
+                                        setRollResult({ rolls, total });
                                       }}
                                       className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                     >
-                                      Roll {(grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1}{spell.diceType}{spell.perLevelBonus ? ` +${spell.perLevelBonus}/lvl` : ''}
+                                      Roll {(grimoire.entries || []).find(en => en.instanceId === group.entryIds[0])?.numDice || 1}{spell.diceType}
                                     </button>
                                     <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                     {(() => {
@@ -6140,12 +6101,8 @@ if (editModal.type === 'acTracking' && char) {
                                             onClick={() => {
                                               const rolls = diceValues.slice(0, numDice);
                                               if (rolls.every(r => r > 0)) {
-                                                const perLevelBonus = Number(spell.perLevelBonus) || 0;
-                                                const currentLevel = calculateNextLevel().currentLevel || 1;
-                                                const levelBonus = perLevelBonus * currentLevel;
-                                                const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                                const total = diceTotal + levelBonus;
-                                                setRollResult({ rolls, total, levelBonus });
+                                                const total = rolls.reduce((a, b) => a + b, 0);
+                                                setRollResult({ rolls, total });
                                               }
                                             }}
                                             className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -6165,25 +6122,28 @@ if (editModal.type === 'acTracking' && char) {
                                 )}
                               </div>
                             )}
+                              </>
+                            )}
                           </div>
                         );
                       })}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
-                </div>
-              );
-            })}
+        </div>
+      );
+    })}
           </div>
         )}
 
       {activeTab === 'magic' && magicInventoryView && (
         <div className="space-y-4">
           <div className="flex flex-col gap-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Magic Inventory</h2>
               <button
                 onClick={() => { setMagicInventoryView(false); setSelectedMagicItemId(null); }}
@@ -6195,7 +6155,7 @@ if (editModal.type === 'acTracking' && char) {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={resetPermanentSpellsForNewDay}
-                className="px-3 py-2 text-sm bg-blue-600 rounded hover:bg-blue-700 font-semibold flex-1 sm:flex-none"
+                className="px-3 py-2 text-sm bg-blue-600 rounded hover:bg-blue-700 font-semibold"
               >
                 New Day
               </button>
@@ -6207,7 +6167,7 @@ if (editModal.type === 'acTracking' && char) {
                   updateItemModal({ isMagicCasting: true });
                   setEditModal({ type: 'newItem', fromMagicInventory: true });
                 }}
-                className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold flex-1 sm:flex-none"
+                className="px-3 py-2 text-sm bg-green-600 rounded hover:bg-green-700 font-semibold"
               >
                 + Add Magic Item
               </button>
@@ -6339,35 +6299,37 @@ if (editModal.type === 'acTracking' && char) {
                                         </div>
                                       </div>
 
-                                      {/* Collapsible Spell Details */}
+                                      {/* Collapsible Details Button */}
                                       <button
-                                        onClick={() => setExpandedMagicItemSpells(prev => ({ ...prev, [`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`]: !prev[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] }))}
-                                        className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"
+                                        onClick={() => {
+                                          const key = `${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`;
+                                          setExpandedMagicItemSpells(prev => ({ ...prev, [key]: !prev[key] }));
+                                        }}
+                                        className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
                                       >
                                         {expandedMagicItemSpells[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                        Description
+                                        Details
                                       </button>
 
                                       {expandedMagicItemSpells[`${item.id}-${s.name}-${g.permanent ? 'p' : 'c'}`] && (
-                                        <div className="text-sm text-gray-300 space-y-2">
-                                          <div className="text-sm text-gray-300">{s.description}</div>
+                                        <>
+                                          {/* Spell Details */}
+                                          <div className="text-sm text-gray-300 space-y-2">
+                                            <div className="text-sm text-gray-300">{s.description}</div>
 
-                                          <div className="grid grid-cols-2 gap-2 text-sm">
-                                            <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
-                                            <div><span className="text-gray-400">Range:</span> {s.range}</div>
-                                            <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
-                                            <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
-                                            <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
-                                            <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
+                                            <div className="grid grid-cols-2 gap-2 text-sm">
+                                              <div><span className="text-gray-400">Prep Time:</span> {s.prepTime}</div>
+                                              <div><span className="text-gray-400">Range:</span> {s.range}</div>
+                                              <div><span className="text-gray-400">Duration:</span> {s.duration}</div>
+                                              <div><span className="text-gray-400">AoE:</span> {s.aoe || 'None'}</div>
+                                              <div><span className="text-gray-400">Saving Throw:</span> {s.savingThrow || 'None'}</div>
+                                              <div><span className="text-gray-400">Spell Resist:</span> {s.spellResistance ? 'Yes' : 'No'}</div>
+                                            </div>
                                           </div>
-                                        </div>
-                                      )}
 
-                              
-
-                                      {s.hasDiceRoll && (
-                                        <div className="bg-gray-800 p-3 rounded">
-                                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                                          {s.hasDiceRoll && (
+                                            <div className="bg-gray-800 p-3 rounded">
+                                              <div className="flex flex-wrap items-center gap-2 mb-2">
                                             <label className="text-sm text-gray-400">Number of Dice:</label>
                                             <input
                                               type="text" inputMode="numeric"
@@ -6399,21 +6361,16 @@ if (editModal.type === 'acTracking' && char) {
                                                   onClick={() => {
                                                     const numDice = Math.max(1, Number(g.entries?.[0]?.numDice || 1));
                                                     const diceValue = parseInt(String(s.diceType || 'd0').replace('d', '')) || 0;
-                                                    const perLevelBonus = Number(s.perLevelBonus) || 0;
-                                                    const currentLevel = calculateNextLevel().currentLevel || 1;
-                                                    const levelBonus = perLevelBonus * currentLevel;
-                                                    
                                                     const rolls = [];
                                                     for (let i = 0; i < numDice; i++) {
                                                       rolls.push(rollDice(diceValue));
                                                     }
-                                                    const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                                    const total = diceTotal + (Number(s.diceBonus) || 0) + levelBonus;
-                                                    setRollResult({ rolls, total, levelBonus });
+                                                    const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
+                                                    setRollResult({ rolls, total });
                                                   }}
                                                   className="w-full py-1 bg-green-600 rounded text-sm mb-1"
                                                 >
-                                                  Roll {Number(g.entries?.[0]?.numDice || 1)}{s.diceType}{s.perLevelBonus ? ` +${s.perLevelBonus}/lvl` : ''}
+                                                  Roll {Number(g.entries?.[0]?.numDice || 1)}{s.diceType}
                                                 </button>
                                                 <div className="text-xs text-gray-300 mb-1">Or enter each die:</div>
                                                 {(() => {
@@ -6438,12 +6395,8 @@ if (editModal.type === 'acTracking' && char) {
                                                         onClick={() => {
                                                           const rolls = diceValues.slice(0, numDice);
                                                           if (rolls.every(r => r > 0)) {
-                                                            const perLevelBonus = Number(s.perLevelBonus) || 0;
-                                                            const currentLevel = calculateNextLevel().currentLevel || 1;
-                                                            const levelBonus = perLevelBonus * currentLevel;
-                                                            const diceTotal = rolls.reduce((a, b) => a + b, 0);
-                                                            const total = diceTotal + (Number(s.diceBonus) || 0) + levelBonus;
-                                                            setRollResult({ rolls, total, levelBonus });
+                                                            const total = rolls.reduce((a, b) => a + b, 0) + (Number(s.diceBonus) || 0);
+                                                            setRollResult({ rolls, total });
                                                           }
                                                         }}
                                                         className="w-full py-1 bg-blue-600 rounded text-xs mb-1"
@@ -6455,16 +6408,15 @@ if (editModal.type === 'acTracking' && char) {
                                                 })()}
                                                 {rollResult?.rolls && (
                                                   <div className="mt-1 text-center text-sm">
-                                                    <div>
-                                                      Dice: {rollResult.rolls.join(' + ')} = {rollResult.rolls.reduce((a, b) => a + b, 0)}
-                                                      {rollResult.levelBonus > 0 && ` + ${rollResult.levelBonus} (level bonus)`}
-                                                    </div>
+                                                    <div>Dice: {rollResult.rolls.join(' + ')} = {rollResult.total}</div>
                                                     <div className="text-xl font-bold text-green-400">Total: {rollResult.total}</div>
                                                   </div>
                                                 )}
                                               </div>
                                             )}
                                         </div>
+                                      )}
+                                        </>
                                       )}
                                     </div>
                                   </div>
@@ -6836,13 +6788,13 @@ if (editModal.type === 'acTracking' && char) {
 
 {activeTab === 'magic' && spellsLearnedView && (
           <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Spells Learned</h2>
-              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-                <button onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); }} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500 flex-1 sm:flex-none whitespace-nowrap">
+              <div className="flex gap-2">
+                <button onClick={() => { setSpellsLearnedView(false); setGrimoireView(false); }} className="px-4 py-2 bg-gray-600 rounded text-base hover:bg-gray-500">
                   ← Back to Magic
                 </button>
-                <button onClick={openNewSpellModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700 flex-1 sm:flex-none whitespace-nowrap">
+                <button onClick={openNewSpellModal} className="px-4 py-2 text-base bg-green-600 rounded hover:bg-green-700">
                   + Add Spell
                 </button>
               </div>
@@ -6885,9 +6837,52 @@ if (editModal.type === 'acTracking' && char) {
                             
                             return (
                               <div key={spell.id} className="bg-gray-800 p-3 rounded">
-                                <div className="flex items-center justify-between gap-2 mb-2">
-                                  <div className="font-bold text-lg flex-1 min-w-0">{spell.name}</div>
-                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <div className="font-bold">{spell.name}</div>
+                                      <button onClick={() => setEditModal({ type: 'editSpell', spell })} className="p-1 bg-gray-600 rounded hover:bg-gray-500">
+                                        <Edit2 size={12} />
+                                      </button>
+                                    </div>
+                                    
+                                    {/* Collapsible Details Button */}
+                                    <button
+                                      onClick={() => {
+                                        setExpandedLearnedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }));
+                                      }}
+                                      className="text-sm text-blue-400 hover:text-blue-300 mb-2 flex items-center gap-1"
+                                    >
+                                      {expandedLearnedSpells[spell.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                      Details
+                                    </button>
+
+                                    {expandedLearnedSpells[spell.id] && (
+                                      <>
+                                        <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
+                                        
+                                        <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                                          <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
+                                          <div><span className="text-gray-400">Range:</span> {spell.range}</div>
+                                          <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
+                                          <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
+                                          <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
+                                        </div>
+                                        
+                                        <div className="text-sm mb-2">
+                                          <span className="text-gray-400">Components:</span>
+                                          {spell.verbal && ' V'}
+                                          {spell.somatic && ' S'}
+                                          {spell.material && ' M'}
+                                        </div>
+                                        
+                                        <div className="text-sm mb-2">
+                                          <span className="text-gray-400">Spell Resistance:</span> {spell.spellResistance ? 'Yes' : 'No'}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
                                     {preparedCount > 0 && (
                                       <>
                                         <button
@@ -6901,7 +6896,6 @@ if (editModal.type === 'acTracking' && char) {
                                             }
                                           }}
                                           className="p-1 bg-red-600 rounded hover:bg-red-700"
-                                          title="Remove from Spells Prepared"
                                         >
                                           <Minus size={14} />
                                         </button>
@@ -6918,53 +6912,11 @@ if (editModal.type === 'acTracking' && char) {
                                       }}
                                       disabled={!canPrepare}
                                       className={`p-1 rounded ${canPrepare ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
-                                      title="Add to Spells Prepared"
                                     >
                                       <Plus size={14} />
                                     </button>
-                                    <button 
-                                      onClick={() => setEditModal({ type: 'editSpell', spell })} 
-                                      className="p-1 bg-gray-600 rounded hover:bg-gray-500"
-                                      title="Edit Spell"
-                                    >
-                                      <Edit2 size={14} />
-                                    </button>
                                   </div>
                                 </div>
-                                
-                                {/* Collapsible Description */}
-                                <button
-                                  onClick={() => setExpandedLearnedSpells(prev => ({ ...prev, [spell.id]: !prev[spell.id] }))}
-                                  className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 mb-2"
-                                >
-                                  {expandedLearnedSpells[spell.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                  Description
-                                </button>
-                                
-                                {expandedLearnedSpells[spell.id] && (
-                                  <>
-                                    <div className="text-sm text-gray-300 mb-2">{spell.description}</div>
-                                    
-                                    <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                                      <div><span className="text-gray-400">Prep Time:</span> {spell.prepTime}</div>
-                                      <div><span className="text-gray-400">Range:</span> {spell.range}</div>
-                                      <div><span className="text-gray-400">Duration:</span> {spell.duration}</div>
-                                      <div><span className="text-gray-400">AoE:</span> {spell.aoe || 'None'}</div>
-                                      <div><span className="text-gray-400">Saving Throw:</span> {spell.savingThrow || 'None'}</div>
-                                    </div>
-                                    
-                                    <div className="text-sm mb-2">
-                                      <span className="text-gray-400">Components:</span>
-                                      {spell.verbal && ' V'}
-                                      {spell.somatic && ' S'}
-                                      {spell.material && ` M (${spell.materialDesc})`}
-                                    </div>
-                                    
-                                    {spell.spellResistance && (
-                                      <div className="text-xs text-yellow-400">Spell Resistance: Yes</div>
-                                    )}
-                                  </>
-                                )}
                               </div>
                             );
                           })}
@@ -8175,7 +8127,7 @@ if (editModal.type === 'acTracking' && char) {
                                             type="button"
                                             onClick={(e) => {
                                               e.stopPropagation();
-                                              setEditModal({ type: 'confirmSellItem', itemId: item.id });
+                                              setEditModal({ type: 'confirmSellItem', itemId: item.id, sellQty: 1 });
                                             }}
                                             className="px-4 py-2 text-base bg-yellow-600 rounded hover:bg-yellow-700 text-xs font-semibold"
                                             title="Sell one"
@@ -10062,10 +10014,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               if (!canEdit) return;
                               const val = parseInt(e.target.value || '0', 10) || 0;
 
-                              // Update raw rolls (just the base roll, no CON mod added here)
+                              // Update raw rolls (the textbox values)
                               const nextRolls = rolls.slice();
                               nextRolls[i] = val > 0 ? String(val) : '';
                               setHpDraftRolls(nextRolls);
+
+                              // Update totals (raw + CON), stored in hpDraftLevels
+                              const nextLevels = levels.slice();
+                              nextLevels[i] = val > 0 ? Math.max(1, val + conMod) : 0;
+                              setHpDraftLevels(nextLevels);
                             }}
                             className={`flex-1 p-2 rounded text-white ${canEdit ? "bg-gray-700" : "bg-gray-900 text-gray-500 cursor-not-allowed"} ${isDrained ? 'opacity-50' : ''}`}
                             id={`hp-level-${i}`}
@@ -10110,36 +10067,27 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const conMod = calcMod(getAttributeTotal('con'));
                       const draftRolls = (Array.isArray(hpDraftRolls) && hpDraftRolls.length ? hpDraftRolls : ['', '', '']);
-                      
-                      // Store base rolls only (no CON mod)
-                      const baseRolls = draftRolls.map((v) => {
+                      const draft = draftRolls.map((v) => {
                         const raw = parseInt(v || '0', 10) || 0;
-                        return raw; // Just the roll, no CON mod
+                        if (raw <= 0) return 0;
+                        return Math.max(1, raw + conMod);
                       });
 
-                      // Trim trailing zero-rolls so you don't "unlock" future levels by accident
+                      // Trim trailing zero-levels so you don't "unlock" future levels by accident
                       let lastFilled = -1;
-                      for (let i = 0; i < baseRolls.length; i++) {
-                        if ((Number(baseRolls[i]) || 0) > 0) lastFilled = i;
+                      for (let i = 0; i < draft.length; i++) {
+                        if ((Number(draft[i]) || 0) > 0) lastFilled = i;
                       }
                       const effectiveLen = Math.max(3, lastFilled + 1);
-                      const trimmedRolls = baseRolls.slice(0, effectiveLen);
-                      
-                      // Calculate total HP with current CON mod for display purposes
-                      const calculatedHP = trimmedRolls.reduce((sum, roll) => {
-                        const baseRoll = Number(roll) || 0;
-                        if (baseRoll <= 0) return sum;
-                        return sum + Math.max(1, baseRoll + conMod);
-                      }, 0);
+                      const trimmedHpByLevel = draft.slice(0, effectiveLen);
 
                       const newBonus = modalForms.hpBonus || 0;
                       const newDie = Number(hpDieDraft) || 12;
-                      const newMaxHP = calculatedHP + newBonus;
+                      const newMaxHP = trimmedHpByLevel.reduce((sum, hp) => sum + (Number(hp) || 0), 0) + newBonus;
                       const newCurrentHP = Math.min(char.hp, newMaxHP);
 
                       updateChar({
-                        hpRollsByLevel: trimmedRolls,  // Store base rolls
-                        hpByLevel: trimmedRolls,  // Keep for backwards compat
+                        hpByLevel: trimmedHpByLevel,
                         hpBonus: newBonus,
                         hpDie: newDie,
                         maxHp: newMaxHP,
@@ -12825,6 +12773,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   return amt; // gp
                 };
 
+                const sellQty = editModal.sellQty || 1;
+                const maxQty = sellItem.quantity || 1;
+
                 return (
                   <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
                     <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
@@ -12839,11 +12790,44 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         </button>
                       </div>
 
-                      <p className="text-sm text-gray-200">
-                        Are you sure you want to sell{" "}
-                        <span className="font-semibold">{sellItem.name}</span> for{" "}
-                        <span className="font-semibold">{worthAmount} {worthUnit.toUpperCase()}</span>?
+                      <p className="text-sm text-gray-200 mb-4">
+                        Sell <span className="font-semibold">{sellItem.name}</span> for{" "}
+                        <span className="font-semibold">{worthAmount} {worthUnit.toUpperCase()}</span> each
                       </p>
+
+                      {maxQty > 1 && (
+                        <div className="mb-4">
+                          <label className="block text-sm text-gray-400 mb-2">Quantity to sell:</label>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setEditModal({ ...editModal, sellQty: Math.max(1, sellQty - 1) })}
+                              className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+                            >
+                              <Minus size={16} />
+                            </button>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={sellQty}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 1;
+                                setEditModal({ ...editModal, sellQty: Math.max(1, Math.min(maxQty, val)) });
+                              }}
+                              className="w-20 p-2 bg-gray-700 rounded text-white text-center"
+                            />
+                            <button
+                              onClick={() => setEditModal({ ...editModal, sellQty: Math.min(maxQty, sellQty + 1) })}
+                              className="p-2 bg-gray-700 rounded hover:bg-gray-600"
+                            >
+                              <Plus size={16} />
+                            </button>
+                            <span className="text-sm text-gray-400">of {maxQty}</span>
+                          </div>
+                          <div className="text-sm text-gray-400 mt-2">
+                            Total: <span className="font-semibold text-white">{(worthAmount * sellQty).toFixed(2)} {worthUnit.toUpperCase()}</span>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="flex justify-end gap-2 pt-4">
                         <button
@@ -12855,11 +12839,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
 
                         <button
                           onClick={() => {
-                            const worthGP = toGP(worthAmount, worthUnit);
+                            const worthGP = toGP(worthAmount * sellQty, worthUnit);
                             let nextInv = (char.inventory || [])
                               .map(i =>
                                 i.id === sellItem.id
-                                  ? { ...i, quantity: Math.max(0, (i.quantity || 0) - 1) }
+                                  ? { ...i, quantity: Math.max(0, (i.quantity || 0) - sellQty) }
                                   : i
                               )
                               .filter(i => (i.quantity || 0) > 0);
@@ -12901,10 +12885,15 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               nextMagicItems = (nextMagicItems || []).filter(mi => String(mi?.id) !== `linked-${String(sellItem.id)}`);
                             }
 
+                            // Add the sale proceeds to wallet gold
+                            newWallet = {
+                              ...newWallet,
+                              gold: (newWallet.gold || 0) + worthGP
+                            };
+
                             updateChar({
                               inventory: nextInv,
                               magicItems: nextMagicItems,
-                              moneyGP: (Number(char.moneyGP) || 0) + worthGP + coinsReturned,
                               wallet: newWallet
                             });
                             setEditModal(null);
@@ -13052,12 +13041,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       <span className="text-sm">Has Dice Roll</span>
                     </label>
                     {spellForm.hasDiceRoll && (
-                      <>
+                      <div>
                         <label className="block text-xs text-gray-400 mb-1">Dice Type</label>
                         <select
                           value={spellForm.diceType}
                           onChange={(e) => updateSpellForm({ diceType: e.target.value })}
-                          className="w-full p-2 bg-gray-700 rounded text-white text-sm mb-2"
+                          className="w-full p-2 bg-gray-700 rounded text-white text-sm"
                         >
                           <option value="">Select dice...</option>
                           <option value="d2">d2</option>
@@ -13068,24 +13057,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           <option value="d10">d10</option>
                           <option value="d12">d12</option>
                         </select>
-                        
-                        <label className="block text-xs text-gray-400 mb-1">Bonus Per Caster Level</label>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-300">+</span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={spellForm.perLevelBonus === 0 ? '' : spellForm.perLevelBonus}
-                            onChange={(e) => updateSpellForm({ perLevelBonus: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0) })}
-                            placeholder="0"
-                            className="w-20 p-2 bg-gray-700 rounded text-white text-sm text-center"
-                          />
-                          <span className="text-sm text-gray-300">per level</span>
-                        </div>
-                        <div className="text-xs text-gray-400 mt-1">
-                          Example: 1 = +1 per level, so at level 5 you'd get +5 to the roll
-                        </div>
-                      </>
+                      </div>
                     )}
                   </div>
                   
@@ -13145,7 +13117,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         spellResistance: spellForm.spellResistance,
                         hasDiceRoll: spellForm.hasDiceRoll,
                         diceType: spellForm.diceType,
-                        perLevelBonus: spellForm.perLevelBonus,
                         verbal: spellForm.verbal,
                         somatic: spellForm.somatic,
                         material: spellForm.material,
