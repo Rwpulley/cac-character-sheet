@@ -72,6 +72,8 @@ interface InventoryItem {
   isGem: boolean;
   hasAttrBonus: boolean;
   attrBonuses: { attr: string; value: number }[];
+  hasSaveBonus?: boolean;
+  saveBonuses?: { attr: string; value: number }[];
   effects?: ItemEffect[];
   weaponDamage?: string;
   weaponType?: string;
@@ -183,6 +185,7 @@ interface Character {
   hp: number;
   maxHpBonus: number;
   hpByLevel: number[];
+  hpRollsByLevel?: number[];  // Base HP rolls without CON mod
   levelDrained?: boolean[];  // Track which levels are drained (unchecked = drained)
   hpDie: number;
   ac: number;
@@ -1319,6 +1322,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     isArmor: false,
     isShield: false,
     hasAttrBonus: false,
+    hasSaveBonus: false,
     isMagicCasting: false,
     isGrimoire: false,
     hasEffects: false,
@@ -1336,6 +1340,10 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     attrBonusAttr: 'str',
     attrBonusValue: 0,
     attrBonusValueText: '0',
+    // Save bonuses
+    saveBonusAttr: 'str',
+    saveBonusValue: 0,
+    saveBonusValueText: '0',
     statBonuses: [],
     // Weapon properties
     weaponType: 'melee',
@@ -1463,6 +1471,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemIsArmor = itemModal.isArmor;
   const itemIsShield = itemModal.isShield;
   const itemHasAttrBonus = itemModal.hasAttrBonus;
+  const itemHasSaveBonus = itemModal.hasSaveBonus;
   const itemIsMagicCasting = itemModal.isMagicCasting;
   const itemIsGrimoire = itemModal.isGrimoire;
   const itemMagicCastingDescription = itemModal.magicCastingDescription;
@@ -1473,6 +1482,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const itemAttrBonusAttr = itemModal.attrBonusAttr;
   const itemAttrBonusValue = itemModal.attrBonusValue;
   const itemAttrBonusValueText = itemModal.attrBonusValueText;
+  const itemSaveBonusAttr = itemModal.saveBonusAttr;
+  const itemSaveBonusValue = itemModal.saveBonusValue;
+  const itemSaveBonusValueText = itemModal.saveBonusValueText;
   const itemStatBonuses = itemModal.statBonuses;
   const itemIsWeapon = itemModal.isWeapon;
   const itemIsAmmo = itemModal.isAmmo;
@@ -1493,6 +1505,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemIsArmor = useCallback((v) => updateItemModal({ isArmor: v }), [updateItemModal]);
   const setItemIsShield = useCallback((v) => updateItemModal({ isShield: v }), [updateItemModal]);
   const setItemHasAttrBonus = useCallback((v) => updateItemModal({ hasAttrBonus: v }), [updateItemModal]);
+  const setItemHasSaveBonus = useCallback((v) => updateItemModal({ hasSaveBonus: v }), [updateItemModal]);
   const setItemIsMagicCasting = useCallback((v) => updateItemModal({ isMagicCasting: v }), [updateItemModal]);
   const setItemIsGrimoire = useCallback((v) => updateItemModal({ isGrimoire: v }), [updateItemModal]);
   const setItemMagicCastingDescription = useCallback((v) => updateItemModal({ magicCastingDescription: v }), [updateItemModal]);
@@ -1503,6 +1516,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   const setItemAttrBonusAttr = useCallback((v) => updateItemModal({ attrBonusAttr: v }), [updateItemModal]);
   const setItemAttrBonusValue = useCallback((v) => updateItemModal({ attrBonusValue: v }), [updateItemModal]);
   const setItemAttrBonusValueText = useCallback((v) => updateItemModal({ attrBonusValueText: v }), [updateItemModal]);
+  const setItemSaveBonusAttr = useCallback((v) => updateItemModal({ saveBonusAttr: v }), [updateItemModal]);
+  const setItemSaveBonusValue = useCallback((v) => updateItemModal({ saveBonusValue: v }), [updateItemModal]);
+  const setItemSaveBonusValueText = useCallback((v) => updateItemModal({ saveBonusValueText: v }), [updateItemModal]);
   const setItemStatBonuses = useCallback((v) => updateItemModal({ statBonuses: typeof v === 'function' ? v(itemModal.statBonuses) : v }), [updateItemModal, itemModal.statBonuses]);
   const setItemIsWeapon = useCallback((v) => updateItemModal({ isWeapon: v }), [updateItemModal]);
   const setItemIsAmmo = useCallback((v) => updateItemModal({ isAmmo: v }), [updateItemModal]);
@@ -1869,7 +1885,74 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
   useEffect(() => {
     const loaded = loadFromLocalStorage();
     if (loaded && loaded.length > 0) {
-      setCharacters(loaded);
+      // Migrate legacy moneyGP to wallet coins for each character
+      let needsMigration = false;
+      const migrated = loaded.map(char => {
+        // MIGRATION 1: If moneyGP exists and has any value, convert to wallet
+        if (char.moneyGP && char.moneyGP > 0) {
+          needsMigration = true;
+          
+          // Convert moneyGP (decimal GP value) into proper coins
+          const totalGP = char.moneyGP;
+          const goldCoins = Math.floor(totalGP);
+          const remainder = totalGP - goldCoins;
+          const remainderInCopper = Math.round(remainder * 100);
+          const silverCoins = Math.floor(remainderInCopper / 10);
+          const copperCoins = remainderInCopper % 10;
+          
+          // Create fresh wallet with migrated values
+          return {
+            ...char,
+            wallet: {
+              platinum: 0,
+              electrum: 0,
+              gold: goldCoins,
+              silver: silverCoins,
+              copper: copperCoins
+            },
+            moneyGP: 0
+          };
+        }
+        
+        // MIGRATION 2: Fix wallet with invalid/decimal values even if moneyGP is 0
+        if (char.wallet) {
+          const hasInvalidValues = 
+            typeof char.wallet.gold === 'string' ||
+            typeof char.wallet.silver === 'string' ||
+            typeof char.wallet.copper === 'string' ||
+            typeof char.wallet.platinum === 'string' ||
+            typeof char.wallet.electrum === 'string' ||
+            !Number.isInteger(char.wallet.gold) ||
+            !Number.isInteger(char.wallet.silver) ||
+            !Number.isInteger(char.wallet.copper) ||
+            !Number.isInteger(char.wallet.platinum) ||
+            !Number.isInteger(char.wallet.electrum);
+          
+          if (hasInvalidValues) {
+            needsMigration = true;
+            return {
+              ...char,
+              wallet: {
+                platinum: Math.round(Number(char.wallet.platinum) || 0),
+                electrum: Math.round(Number(char.wallet.electrum) || 0),
+                gold: Math.round(Number(char.wallet.gold) || 0),
+                silver: Math.round(Number(char.wallet.silver) || 0),
+                copper: Math.round(Number(char.wallet.copper) || 0)
+              }
+            };
+          }
+        }
+        
+        // Return unchanged if no migration needed
+        return char;
+      });
+      
+      setCharacters(migrated);
+      
+      // If we migrated, save immediately (don't wait for auto-save)
+      if (needsMigration) {
+        saveToLocalStorage(migrated);
+      }
     }
     setIsLoading(false);
   }, []);
@@ -2322,16 +2405,33 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
 
   // Memoized max HP calculation (accounts for level drain)
   const memoizedMaxHP = useMemo(() => {
-    if (!char || !char.hpByLevel) return char?.maxHp || 0;
+    if (!char) return 0;
+    
+    // Get CON total from memoized attributes
+    const conTotal = memoizedAttributeTotals.con;
+    const conMod = calcMod(conTotal);
     const levelDrained = char.levelDrained || [];
-    // Only sum HP from levels that are NOT drained (drained = true means level is lost)
-    const levelHP = char.hpByLevel.reduce((sum, hp, idx) => {
-      const isDrained = levelDrained[idx] === true;
-      return sum + (isDrained ? 0 : hp);
-    }, 0);
-    const bonusHP = char.hpBonus || 0;
-    return levelHP + bonusHP;
-  }, [char?.hpByLevel, char?.hpBonus, char?.maxHp, char?.levelDrained]);
+    
+    // Use new system (hpRollsByLevel) if available, otherwise fall back to old system
+    if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
+      // New system: base roll + current CON mod per level
+      const levelHP = char.hpRollsByLevel.reduce((sum, baseRoll, idx) => {
+        const isDrained = levelDrained[idx] === true;
+        if (isDrained) return sum;
+        return sum + baseRoll + conMod;
+      }, 0);
+      const bonusHP = char.hpBonus || 0;
+      return levelHP + bonusHP;
+    } else {
+      // Old system: hpByLevel already includes CON mod
+      const levelHP = (char.hpByLevel || []).reduce((sum, hp, idx) => {
+        const isDrained = levelDrained[idx] === true;
+        return sum + (isDrained ? 0 : hp);
+      }, 0);
+      const bonusHP = char.hpBonus || 0;
+      return levelHP + bonusHP;
+    }
+  }, [char?.hpByLevel, char?.hpRollsByLevel, char?.hpBonus, char?.levelDrained, memoizedAttributeTotals.con]);
   
   // Calculate effective level (actual level minus drained levels)
   const effectiveLevel = useMemo(() => {
@@ -2955,6 +3055,23 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       setItemAttrBonusAttr(loadedBonuses[0]?.attr || 'str');
       setItemAttrBonusValue(loadedBonuses[0]?.value || 0);
       setItemAttrBonusValueText(String(loadedBonuses[0]?.value ?? 0));
+      
+      // Load save bonuses
+      const loadedSaveBonuses = Array.isArray(editModal.item?.saveBonuses)
+        ? editModal.item.saveBonuses
+            .filter(b => b && typeof b === 'object')
+            .map(b => ({ attr: String(b.attr || '').toLowerCase(), value: Number(b.value) || 0 }))
+            .filter(b => b.attr && b.value !== 0)
+        : [];
+      
+      setItemHasSaveBonus(!!editModal.item?.hasSaveBonus || loadedSaveBonuses.length > 0);
+      updateItemModal({ saveBonuses: loadedSaveBonuses });
+      
+      // Initialize save bonus controls
+      setItemSaveBonusAttr(loadedSaveBonuses[0]?.attr || 'str');
+      setItemSaveBonusValue(loadedSaveBonuses[0]?.value || 0);
+      setItemSaveBonusValueText(String(loadedSaveBonuses[0]?.value ?? 0));
+      
       setItemIsMagicCasting(!!editModal.item?.isMagicCasting);
       setItemIsGrimoire(!!editModal.item?.isGrimoire);
       setItemMagicCastingDescription(String(editModal.item?.magicCastingDescription || ''));
@@ -4414,21 +4531,37 @@ if (editModal.type === 'acTracking' && char) {
                     Edit HP
                   </button>
                   <button onClick={() => {
-                      const levels = (char.hpByLevel && char.hpByLevel.length) ? char.hpByLevel : [0, 0, 0];
-                      const padded = levels.slice();
-                      while (padded.length < 3) padded.push(0);
-                      setHpDraftLevels(padded);
                       const conMod = calcMod(getAttributeTotal('con'));
-                      const rolls = padded.map((v) => {
-                        const total = Number(v) || 0;
-                        if (total <= 0) return '';
-                        const raw = total - conMod;
-                        return String(raw);
+                      let rolls;
+                      
+                      if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
+                        // New system exists - use it directly, NO migration needed
+                        rolls = char.hpRollsByLevel;
+                      } else if (char.hpByLevel && char.hpByLevel.length > 0) {
+                        // Old system only - migrate ONCE by subtracting current CON mod
+                        rolls = char.hpByLevel.map(total => {
+                          if (total <= 0) return 0;
+                          // Subtract CON mod to recover the original roll (minimum 1)
+                          return Math.max(1, total - conMod);
+                        });
+                      } else {
+                        rolls = [0, 0, 0];
+                      }
+                      
+                      const padded = rolls.slice();
+                      while (padded.length < 3) padded.push(0);
+                      
+                      // Convert to strings for the draft state
+                      const rollStrings = padded.map((v) => {
+                        const roll = Number(v) || 0;
+                        return roll > 0 ? String(roll) : '';
                       });
-                      setHpDraftRolls(rolls);
+                      setHpDraftRolls(rollStrings);
 
                       let lastFilled = -1;
-                      for (let i = 0; i < rolls.length; i++) { if ((parseInt(rolls[i] || '0', 10) || 0) > 0) lastFilled = i; }
+                      for (let i = 0; i < rollStrings.length; i++) { 
+                        if ((parseInt(rollStrings[i] || '0', 10) || 0) > 0) lastFilled = i; 
+                      }
                       const effectiveLen = Math.max(3, lastFilled + 1);
                       setHpLevelsShown(effectiveLen);
                       setHpDieDraft(char.hpDie || 12);
@@ -5408,7 +5541,25 @@ if (editModal.type === 'acTracking' && char) {
                   const encStatus = getEncumbranceStatus();
                   const encDexPenalty = (key === 'dex' && encStatus === 'burdened') ? -2 : 0;
                   const isDexOverburdened = (key === 'dex' && encStatus === 'overburdened');
-                  const total = level + mod + prime + saveModifier + encDexPenalty;
+                  
+                  // Calculate item save bonuses
+                  const itemsWithSaveBonuses = (char.inventory || []).filter(item => {
+                    return item.hasSaveBonus && Array.isArray(item.saveBonuses) && item.saveBonuses.length > 0;
+                  });
+                  
+                  let itemSaveBonus = 0;
+                  const itemsProvidingBonus = [];
+                  
+                  itemsWithSaveBonuses.forEach(item => {
+                    item.saveBonuses.forEach(bonus => {
+                      if (String(bonus.attr).toLowerCase() === key) {
+                        itemSaveBonus += Number(bonus.value) || 0;
+                        itemsProvidingBonus.push({ name: item.name, value: Number(bonus.value) || 0 });
+                      }
+                    });
+                  });
+                  
+                  const total = level + mod + prime + saveModifier + encDexPenalty + itemSaveBonus;
                   
                   return (
                     <div key={key} className="bg-gray-700 p-4 rounded">
@@ -5428,6 +5579,15 @@ if (editModal.type === 'acTracking' && char) {
                               <div>Burdened: -2</div>
                             )}
                             {saveModifier !== 0 && <div className="text-purple-400">Modifier: {saveModifier >= 0 ? '+' : ''}{saveModifier}</div>}
+                            {itemsProvidingBonus.length > 0 && (
+                              <div>
+                                {itemsProvidingBonus.map((item, idx) => (
+                                  <div key={idx} className="text-blue-400">
+                                    {item.name}: {item.value >= 0 ? '+' : ''}{item.value}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                             <div className="font-bold text-xl border-t border-gray-600 pt-2 mt-2">
                               Save Bonus: {total >= 0 ? `+${total}` : String(total)}
                             </div>
@@ -10067,27 +10227,38 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     onClick={() => {
                       const conMod = calcMod(getAttributeTotal('con'));
                       const draftRolls = (Array.isArray(hpDraftRolls) && hpDraftRolls.length ? hpDraftRolls : ['', '', '']);
-                      const draft = draftRolls.map((v) => {
+                      
+                      // Save BASE rolls only (without CON mod)
+                      const baseRolls = draftRolls.map((v) => {
                         const raw = parseInt(v || '0', 10) || 0;
-                        if (raw <= 0) return 0;
-                        return Math.max(1, raw + conMod);
+                        return Math.max(0, raw);  // Just the base roll, no CON mod
+                      });
+
+                      // Also save to old system for backwards compatibility (base roll + CON mod)
+                      const hpWithMod = baseRolls.map((roll) => {
+                        if (roll <= 0) return 0;
+                        return roll + conMod;
                       });
 
                       // Trim trailing zero-levels so you don't "unlock" future levels by accident
                       let lastFilled = -1;
-                      for (let i = 0; i < draft.length; i++) {
-                        if ((Number(draft[i]) || 0) > 0) lastFilled = i;
+                      for (let i = 0; i < baseRolls.length; i++) {
+                        if ((Number(baseRolls[i]) || 0) > 0) lastFilled = i;
                       }
                       const effectiveLen = Math.max(3, lastFilled + 1);
-                      const trimmedHpByLevel = draft.slice(0, effectiveLen);
+                      const trimmedBaseRolls = baseRolls.slice(0, effectiveLen);
+                      const trimmedHpByLevel = hpWithMod.slice(0, effectiveLen);
 
                       const newBonus = modalForms.hpBonus || 0;
                       const newDie = Number(hpDieDraft) || 12;
+                      
+                      // Max HP will be calculated dynamically by memoizedMaxHP
                       const newMaxHP = trimmedHpByLevel.reduce((sum, hp) => sum + (Number(hp) || 0), 0) + newBonus;
                       const newCurrentHP = Math.min(char.hp, newMaxHP);
 
                       updateChar({
-                        hpByLevel: trimmedHpByLevel,
+                        hpRollsByLevel: trimmedBaseRolls,  // NEW: Save base rolls
+                        hpByLevel: trimmedHpByLevel,  // OLD: Keep for backwards compatibility
                         hpBonus: newBonus,
                         hpDie: newDie,
                         maxHp: newMaxHP,
@@ -11420,9 +11591,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           // Calculate total cost in copper (smallest unit) for precision
                           const costInCopper = (spendPP * 1000) + (spendEP * 500) + (spendGP * 100) + (spendSP * 10) + spendCP;
                           
-                          // Calculate total wallet value in copper
-                          const walletInCopper = ((wallet.platinum || 0) * 1000) + ((wallet.electrum || 0) * 500) + 
-                                                ((wallet.gold || 0) * 100) + ((wallet.silver || 0) * 10) + (wallet.copper || 0);
+                          // Calculate total wallet value in copper - ensure numbers and round to avoid floating point issues
+                          const walletInCopper = (Math.round(Number(wallet.platinum) || 0) * 1000) + 
+                                                (Math.round(Number(wallet.electrum) || 0) * 500) + 
+                                                (Math.round(Number(wallet.gold) || 0) * 100) + 
+                                                (Math.round(Number(wallet.silver) || 0) * 10) + 
+                                                Math.round(Number(wallet.copper) || 0);
                           
                           if (costInCopper > walletInCopper) {
                             showToast('Not enough money!', 'error');
@@ -11671,6 +11845,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             className="w-4 h-4"
                           />
                           Stat Bonus
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={itemHasSaveBonus}
+                            onChange={(e) => setItemHasSaveBonus(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          Checks/Saves Bonus
                         </label>
 
                         <label className="flex items-center gap-2 text-sm text-gray-200">
@@ -12204,6 +12388,116 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         </button>
                       </div>
                     )}
+
+                    {itemHasSaveBonus && (
+                      <div className="mt-2 space-y-2">
+                        <div className="font-bold text-gray-200">Checks/Saves Bonuses</div>
+
+                        {(!itemModal.saveBonuses || itemModal.saveBonuses.length === 0) ? (
+                          <div className="text-sm text-gray-400">No save bonuses added yet.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {itemModal.saveBonuses.map((b, idx) => (
+                              <div key={`${b.attr}-${idx}`} className="flex items-center justify-between bg-gray-800 p-2 rounded">
+                                <div className="text-sm text-gray-200">
+                                  <span className="font-semibold">{String(b.attr || '').toUpperCase()}</span>: {Number(b.value) >= 0 ? '+' : ''}{Number(b.value) || 0}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateItemModal({ 
+                                      saveBonuses: (itemModal.saveBonuses || []).filter((_, i) => i !== idx) 
+                                    });
+                                  }}
+                                  className="p-2 bg-red-700 rounded hover:bg-red-600"
+                                  title="Remove bonus"
+                                >
+                                  <X size={16} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Add Bonus: Attribute</label>
+                            <select
+                              value={itemSaveBonusAttr}
+                              onChange={(e) => setItemSaveBonusAttr(e.target.value)}
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            >
+                              <option value="str">STR</option>
+                              <option value="dex">DEX</option>
+                              <option value="con">CON</option>
+                              <option value="int">INT</option>
+                              <option value="wis">WIS</option>
+                              <option value="cha">CHA</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-gray-400 mb-1">Value</label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={itemSaveBonusValueText}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                // Allow empty, negative sign, digits, and decimal point
+                                if (val === '' || val === '-' || /^-?\d*\.?\d*$/.test(val)) {
+                                  setItemSaveBonusValueText(val);
+                                  const n = Number(val);
+                                  if (Number.isFinite(n)) {
+                                    setItemSaveBonusValue(n);
+                                  }
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const val = e.target.value;
+                                const n = Number(val);
+                                if (val === '' || val === '-' || !Number.isFinite(n)) {
+                                  setItemSaveBonusValueText('0');
+                                  setItemSaveBonusValue(0);
+                                } else {
+                                  setItemSaveBonusValueText(String(n));
+                                  setItemSaveBonusValue(n);
+                                }
+                              }}
+                              className="w-full p-2 bg-gray-700 rounded text-white"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const attr = String(itemSaveBonusAttr || '').toLowerCase();
+                            const val = Number(itemSaveBonusValue) || 0;
+                            if (!attr || val === 0) return;
+
+                            const currentBonuses = itemModal.saveBonuses || [];
+                            const existingIdx = currentBonuses.findIndex(x => String(x.attr || '').toLowerCase() === attr);
+                            let newBonuses;
+                            
+                            if (existingIdx >= 0) {
+                              newBonuses = [...currentBonuses];
+                              newBonuses[existingIdx] = { ...newBonuses[existingIdx], value: (Number(newBonuses[existingIdx].value) || 0) + val };
+                            } else {
+                              newBonuses = [...currentBonuses, { attr, value: val }];
+                            }
+                            
+                            updateItemModal({ saveBonuses: newBonuses });
+
+                            // reset value for quick entry
+                            setItemSaveBonusValue(0);
+                            setItemSaveBonusValueText('0');
+                          }}
+                          className="w-full py-2 bg-gray-700 rounded hover:bg-gray-600 text-sm font-semibold"
+                        >
+                          + Add Save Bonus
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="mb-3">
@@ -12403,6 +12697,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         // Legacy single fields retained for backward compatibility (first bonus only)
                         attrBonusAttr: (itemHasAttrBonus && Array.isArray(itemStatBonuses) && itemStatBonuses[0]) ? itemStatBonuses[0].attr : null,
                         attrBonusValue: (itemHasAttrBonus && Array.isArray(itemStatBonuses) && itemStatBonuses[0]) ? (Number(itemStatBonuses[0].value) || 0) : 0,
+                        hasSaveBonus: !!itemHasSaveBonus && (Array.isArray(itemModal.saveBonuses) ? itemModal.saveBonuses.length > 0 : false),
+                        saveBonuses: (itemHasSaveBonus && Array.isArray(itemModal.saveBonuses)) ? itemModal.saveBonuses : [],
                         isMagicCasting: !!itemIsMagicCasting,
                         isGrimoire: !!itemIsGrimoire,
                         magicCastingDescription: String(itemMagicCastingDescription || ''),
