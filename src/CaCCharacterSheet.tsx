@@ -3982,13 +3982,16 @@ if (editModal.type === 'acTracking' && char) {
     });
   };
 
-  // Use memoized level info
+  // Use memoized level info — returns EFFECTIVE level (XP-earned minus drained levels)
+  // so that both XP loss and HP-tab level drain reduce checks/saves appropriately
   const getTotalLevel = () => {
     if (!char) return 1;
     if (Array.isArray(char.xpTable) && typeof char.currentXp === 'number') {
-      return memoizedLevelInfo.currentLevel;
+      return memoizedLevelInfo.effectiveLevel;
     }
-    return (Number(char.class1Level) || 0) + (Number(char.class2Level) || 0) || 1;
+    const totalLevel = (Number(char.class1Level) || 0) + (Number(char.class2Level) || 0) || 1;
+    const drainedCount = (char.levelDrained || []).filter(d => d === true).length;
+    return Math.max(1, totalLevel - drainedCount);
   };
 
   // Use memoized max HP
@@ -10142,11 +10145,18 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                   const willBeDrained = !e.target.checked;
                                   newDrained[i] = willBeDrained;
                                   
-                                  // Calculate new max HP
-                                  const newMaxHP = char.hpByLevel.reduce((sum, hp, idx) => {
-                                    const drained = newDrained[idx] === true;
-                                    return sum + (drained ? 0 : hp);
-                                  }, 0) + (char.hpBonus || 0);
+                                  // Calculate new max HP (mirrors memoizedMaxHP logic)
+                                  const conModDrain = calcMod(getAttributeTotal('con'));
+                                  const newMaxHP = char.hpRollsByLevel && char.hpRollsByLevel.length > 0
+                                    ? char.hpRollsByLevel.reduce((sum, baseRoll, idx) => {
+                                        const drained = newDrained[idx] === true;
+                                        if (drained || !baseRoll || baseRoll <= 0) return sum;
+                                        return sum + Math.max(1, baseRoll + conModDrain);
+                                      }, 0) + (char.hpBonus || 0)
+                                    : (char.hpByLevel || []).reduce((sum, hp, idx) => {
+                                        const drained = newDrained[idx] === true;
+                                        return sum + (drained ? 0 : hp);
+                                      }, 0) + (char.hpBonus || 0);
                                   
                                   // Adjust current HP if it exceeds new max
                                   const newCurrentHP = Math.min(char.hp, newMaxHP);
@@ -10563,8 +10573,60 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <DomStepper value={modalForms.xpAdd} onChange={(v) => updateModalForm({ xpAdd: v })} step={100} min={-999999} allowManual={true} />
                   <button
                     onClick={() => {
-                      const newXp = Math.max(0, (char.currentXp || 0) + modalForms.xpAdd);
-                      updateChar({ currentXp: newXp });
+                      const oldXp = char.currentXp || 0;
+                      const newXp = Math.max(0, oldXp + modalForms.xpAdd);
+
+                      // Calculate old and new XP-earned levels
+                      const xpTable = Array.isArray(char.xpTable) ? char.xpTable : [];
+                      const calcXpLevel = (xp: number) => {
+                        let lvl = 1;
+                        for (let i = xpTable.length - 1; i >= 0; i--) {
+                          if (xp >= xpTable[i]) { lvl = i + 1; break; }
+                        }
+                        return lvl;
+                      };
+                      const oldLevel = xpTable.length > 0 ? calcXpLevel(oldXp) : null;
+                      const newLevel = xpTable.length > 0 ? calcXpLevel(newXp) : null;
+
+                      const updates: Partial<typeof char> = { currentXp: newXp };
+
+                      // If XP removal caused a level loss, strip the HP for lost level(s)
+                      if (oldLevel !== null && newLevel !== null && newLevel < oldLevel) {
+                        const conMod = calcMod(getAttributeTotal('con'));
+
+                        // Trim hpRollsByLevel — remove entries beyond new level count
+                        const oldRolls = Array.isArray(char.hpRollsByLevel) ? char.hpRollsByLevel : [];
+                        if (oldRolls.length > newLevel) {
+                          // Calculate how much HP we're removing
+                          const removedRolls = oldRolls.slice(newLevel);
+                          const hpLost = removedRolls.reduce((sum, roll) => {
+                            if (!roll || roll <= 0) return sum;
+                            return sum + Math.max(1, roll + conMod);
+                          }, 0);
+                          const trimmedRolls = oldRolls.slice(0, newLevel);
+                          // Also trim old-system hpByLevel
+                          const oldHpByLevel = Array.isArray(char.hpByLevel) ? char.hpByLevel : [];
+                          const trimmedHpByLevel = oldHpByLevel.slice(0, newLevel);
+                          // Also trim levelDrained
+                          const oldDrained = Array.isArray(char.levelDrained) ? char.levelDrained : [];
+                          const trimmedDrained = oldDrained.slice(0, newLevel);
+
+                          const newMaxHp = trimmedRolls.reduce((sum, roll, idx) => {
+                            if (!roll || roll <= 0) return sum;
+                            const isDrained = trimmedDrained[idx] === true;
+                            if (isDrained) return sum;
+                            return sum + Math.max(1, roll + conMod);
+                          }, 0) + (char.hpBonus || 0);
+
+                          updates.hpRollsByLevel = trimmedRolls;
+                          updates.hpByLevel = trimmedHpByLevel;
+                          updates.levelDrained = trimmedDrained;
+                          updates.maxHp = newMaxHp;
+                          updates.hp = Math.min(char.hp, newMaxHp);
+                        }
+                      }
+
+                      updateChar(updates);
                       setEditModal(null);
                     }}
                     className="w-full py-2 bg-blue-600 rounded hover:bg-blue-700"
