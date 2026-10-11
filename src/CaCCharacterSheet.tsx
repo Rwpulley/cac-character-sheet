@@ -1888,8 +1888,12 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       // Migrate legacy moneyGP to wallet coins for each character
       let needsMigration = false;
       const migrated = loaded.map(char => {
-        // MIGRATION 1: If moneyGP exists and has any value, convert to wallet
-        if (char.moneyGP && char.moneyGP > 0) {
+        // MIGRATION 1: Legacy characters stored money only as moneyGP with no wallet coins.
+        // Current characters keep moneyGP in sync with the wallet, so only migrate when the wallet is empty.
+        const w = char.wallet;
+        const walletHasCoins = !!w && ((Number(w.platinum) || 0) + (Number(w.gold) || 0) + (Number(w.electrum) || 0) +
+                                       (Number(w.silver) || 0) + (Number(w.copper) || 0)) > 0;
+        if (char.moneyGP && char.moneyGP > 0 && !walletHasCoins) {
           needsMigration = true;
           
           // Convert moneyGP (decimal GP value) into proper coins
@@ -2556,7 +2560,7 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     }
     
     // Calculate stored coins GP value and weight
-    const storedCoinsGP = (storedCoins.platinum * 10) + (storedCoins.electrum * 5) + storedCoins.gold + (storedCoins.silver * 0.1) + (storedCoins.copper * 0.01);
+    const storedCoinsGP = (storedCoins.platinum * 10) + (storedCoins.electrum * 0.5) + storedCoins.gold + (storedCoins.silver * 0.1) + (storedCoins.copper * 0.01);
     const storedCoinCount = storedCoins.platinum + storedCoins.gold + storedCoins.electrum + storedCoins.silver + storedCoins.copper;
     const storedCoinsWeight = storedCoinCount / 16;
     const totalWeight = itemsWeight + storedCoinsWeight;
@@ -4516,7 +4520,7 @@ if (editModal.type === 'acTracking' && char) {
               <div>
                 <label className="block text-sm text-gray-400">HP</label>
                 <div className="flex items-center gap-2 mb-1">
-                  <button onClick={() => updateChar({ hp: Math.max(0, char.hp - 1) })} className="p-1 bg-red-600 rounded hover:bg-red-700">
+                  <button onClick={() => updateChar({ hp: Math.max(-10, char.hp - 1) })} className="p-1 bg-red-600 rounded hover:bg-red-700">
                     <Minus size={16} />
                   </button>
                   <span className="text-xl font-bold">{char.hp} / {calculateMaxHP()}</span>
@@ -4524,6 +4528,12 @@ if (editModal.type === 'acTracking' && char) {
                     <Plus size={16} />
                   </button>
                 </div>
+                {/* Unconscious at 0 or below, dead at -10 */}
+                {char.hp <= 0 && (
+                  <div className={`text-xs font-semibold mb-1 ${char.hp <= -10 ? 'text-red-500' : 'text-yellow-400'}`}>
+                    {char.hp <= -10 ? '💀 Dead' : '😵 Unconscious'}
+                  </div>
+                )}
                 {/* Level drain indicator */}
                 {memoizedLevelInfo.drainedLevels > 0 && (
                   <div className="text-xs text-red-400 mb-1">
@@ -7773,7 +7783,7 @@ if (editModal.type === 'acTracking' && char) {
                 const totalSP = Math.round(wallet.silver || 0) + bagsCoins.silver;
                 const totalCP = Math.round(wallet.copper || 0) + bagsCoins.copper;
                 
-                const totalGPValue = (totalPP * 10) + (totalEP * 5) + totalGP + (totalSP * 0.1) + (totalCP * 0.01);
+                const totalGPValue = (totalPP * 10) + (totalEP * 0.5) + totalGP + (totalSP * 0.1) + (totalCP * 0.01);
                 
                 // Calculate gem worth (only items marked as gems with worth)
                 const gemsWithWorth = (char.inventory || []).filter(item => {
@@ -7788,7 +7798,7 @@ if (editModal.type === 'acTracking' && char) {
                   let gpValue = 0;
                   if (worthUnit === 'cp') gpValue = worthAmount * 0.01;
                   else if (worthUnit === 'sp') gpValue = worthAmount * 0.1;
-                  else if (worthUnit === 'ep') gpValue = worthAmount * 5;
+                  else if (worthUnit === 'ep') gpValue = worthAmount * 0.5;
                   else if (worthUnit === 'pp') gpValue = worthAmount * 10;
                   else gpValue = worthAmount; // gp
                   return sum + (gpValue * qty);
@@ -8066,8 +8076,8 @@ if (editModal.type === 'acTracking' && char) {
                                               <div className="text-xs text-gray-400 mt-1">
                                                 {info.storedCoins.copper > 0 && <span className="mr-2 text-orange-400">{info.storedCoins.copper} CP</span>}
                                                 {info.storedCoins.silver > 0 && <span className="mr-2">{info.storedCoins.silver} SP</span>}
-                                                {info.storedCoins.gold > 0 && <span className="mr-2 text-yellow-400">{info.storedCoins.gold} GP</span>}
                                                 {info.storedCoins.electrum > 0 && <span className="mr-2 text-blue-300">{info.storedCoins.electrum} EP</span>}
+                                                {info.storedCoins.gold > 0 && <span className="mr-2 text-yellow-400">{info.storedCoins.gold} GP</span>}
                                                 {info.storedCoins.platinum > 0 && <span className="text-gray-300">{info.storedCoins.platinum} PP</span>}
                                               </div>
                                             </div>
@@ -10009,7 +10019,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       type="text"
                       inputMode="numeric"
                       value={modalForms.hpCurrent === 0 ? '' : modalForms.hpCurrent}
-                      onChange={(e) => updateModalForm({ hpCurrent: e.target.value === '' ? 0 : (parseInt(e.target.value) || 0) })}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || val === '-') {
+                          updateModalForm({ hpCurrent: val === '-' ? val : 0 });
+                        } else {
+                          updateModalForm({ hpCurrent: parseInt(val) || 0 });
+                        }
+                      }}
                       placeholder="0"
                       className="w-full p-2 bg-gray-700 rounded text-white"
                     />
@@ -10040,7 +10057,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   <button
                     onClick={() => {
                       const delta = typeof modalForms.hpDelta === 'string' ? 0 : modalForms.hpDelta;
-                      const next = clamp(modalForms.hpCurrent + delta, 0, calculateMaxHP());
+                      const current = typeof modalForms.hpCurrent === 'string' ? 0 : modalForms.hpCurrent;
+                      const next = clamp(current + delta, -10, calculateMaxHP());
                       updateChar({ hp: next, currentHp: next });
                       setEditModal(null);
                     }}
@@ -11266,7 +11284,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     const coinsOnPerson = ppOnPerson + gpOnPerson + epOnPerson + spOnPerson + cpOnPerson;
                     
                     const totalCoins = pp + gp + ep + sp + cp;
-                    const totalGPValue = (pp * 10) + gp + (ep * 5) + (sp * 0.1) + (cp * 0.01);
+                    const totalGPValue = (pp * 10) + gp + (ep * 0.5) + (sp * 0.1) + (cp * 0.01);
                     const coinWeight = coinsOnPerson / 16; // Only coins on person count for weight
                     const coinEV = coinsOnPerson / 160;
                     
@@ -11289,12 +11307,12 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             <div className="text-xs text-gray-500 text-center">SP</div>
                           </div>
                           <div className="bg-gray-800 rounded p-2 min-w-[60px]">
-                            <div className="text-base sm:text-lg font-bold text-yellow-400 text-center">{gp.toLocaleString()}</div>
-                            <div className="text-xs text-gray-500 text-center">GP</div>
-                          </div>
-                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
                             <div className="text-base sm:text-lg font-bold text-blue-300 text-center">{ep.toLocaleString()}</div>
                             <div className="text-xs text-gray-500 text-center">EP</div>
+                          </div>
+                          <div className="bg-gray-800 rounded p-2 min-w-[60px]">
+                            <div className="text-base sm:text-lg font-bold text-yellow-400 text-center">{gp.toLocaleString()}</div>
+                            <div className="text-xs text-gray-500 text-center">GP</div>
                           </div>
                           <div className="bg-gray-800 rounded p-2 min-w-[60px]">
                             <div className="text-base sm:text-lg font-bold text-gray-300 text-center">{pp.toLocaleString()}</div>
@@ -11324,7 +11342,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     // Calculate total stored coins across all containers
                     const totalStoredCoinsGP = magicalContainers.reduce((sum, c) => {
                       if (c.storedCoins) {
-                        return sum + (c.storedCoins.platinum * 10) + (c.storedCoins.electrum * 5) + 
+                        return sum + (c.storedCoins.platinum * 10) + (c.storedCoins.electrum * 0.5) + 
                                c.storedCoins.gold + (c.storedCoins.silver * 0.1) + (c.storedCoins.copper * 0.01);
                       }
                       return sum + (Number(c.storedCoinsGP) || 0);
@@ -11396,7 +11414,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     const totalSelectedCoins = selectedWalletTotal + selectedContainerTotal;
                     const sliderMax = selectedContainer ? (maxCoinsByWeight === Infinity ? totalSelectedCoins : Math.min(maxCoinsByWeight, totalSelectedCoins)) : 0;
                     
-                    const containerGPValue = (containerCoins.platinum * 10) + (containerCoins.electrum * 5) + 
+                    const containerGPValue = (containerCoins.platinum * 10) + (containerCoins.electrum * 0.5) + 
                                             containerCoins.gold + (containerCoins.silver * 0.1) + (containerCoins.copper * 0.01);
                     
                     return (
@@ -11435,8 +11453,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               {[
                                 { key: 'copper', label: 'CP', color: 'text-orange-400' },
                                 { key: 'silver', label: 'SP', color: 'text-gray-400' },
-                                { key: 'gold', label: 'GP', color: 'text-yellow-400' },
                                 { key: 'electrum', label: 'EP', color: 'text-blue-300' },
+                                { key: 'gold', label: 'GP', color: 'text-yellow-400' },
                                 { key: 'platinum', label: 'PP', color: 'text-gray-300' }
                               ].map(coin => (
                                 <label key={coin.key} className="flex items-center gap-1 text-xs">
@@ -11478,11 +11496,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                 const newWallet = { ...walletRounded };
                                 const newContainerCoins = { ...containerCoins };
                                 
-                                // Order for moving TO bag (least valuable first): CP, SP, GP, EP, PP
-                                // Order for moving FROM bag (most valuable first): PP, EP, GP, SP, CP
+                                // Order for moving TO bag (least valuable first): CP, SP, EP, GP, PP
+                                // Order for moving FROM bag (most valuable first): PP, GP, EP, SP, CP
                                 const coinOrder = diff > 0 
-                                  ? ['copper', 'silver', 'gold', 'electrum', 'platinum']
-                                  : ['platinum', 'electrum', 'gold', 'silver', 'copper'];
+                                  ? ['copper', 'silver', 'electrum', 'gold', 'platinum']
+                                  : ['platinum', 'gold', 'electrum', 'silver', 'copper'];
                                 
                                 let remaining = Math.abs(diff);
                                 
@@ -11506,7 +11524,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                   }
                                 }
                                 
-                                const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + 
+                                const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 0.5) + newWallet.gold + 
                                                   (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                                 
                                 updateChar({
@@ -11533,8 +11551,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               <div className="flex flex-wrap gap-x-3">
                                 <span className="text-orange-400">{containerCoins.copper} CP</span>
                                 <span className="text-gray-400">{containerCoins.silver} SP</span>
-                                <span className="text-yellow-400">{containerCoins.gold} GP</span>
                                 <span className="text-blue-300">{containerCoins.electrum} EP</span>
+                                <span className="text-yellow-400">{containerCoins.gold} GP</span>
                                 <span className="text-gray-300">{containerCoins.platinum} PP</span>
                               </div>
                               <div className="mt-1">
@@ -11583,23 +11601,23 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">GP</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={walletForm.gp || ''}
-                          onChange={(e) => updateWalletForm({ gp: parseInt(e.target.value) || 0 })}
-                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div>
                         <label className="block text-xs text-gray-500 mb-1">EP</label>
                         <input
                           type="number"
                           min={0}
                           value={walletForm.ep || ''}
                           onChange={(e) => updateWalletForm({ ep: parseInt(e.target.value) || 0 })}
+                          className="w-full p-2 bg-gray-700 rounded text-white text-center"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">GP</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={walletForm.gp || ''}
+                          onChange={(e) => updateWalletForm({ gp: parseInt(e.target.value) || 0 })}
                           className="w-full p-2 bg-gray-700 rounded text-white text-center"
                           placeholder="0"
                         />
@@ -11628,9 +11646,9 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             silver: (wallet.silver || 0) + (walletForm.sp || 0),
                             copper: (wallet.copper || 0) + (walletForm.cp || 0)
                           };
-                          const newMoneyGP = (newWallet.platinum * 10) + newWallet.gold + (newWallet.electrum * 5) + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
+                          const newMoneyGP = (newWallet.platinum * 10) + newWallet.gold + (newWallet.electrum * 0.5) + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                           
-                          const addedGP = ((walletForm.pp || 0) * 10) + (walletForm.gp || 0) + ((walletForm.ep || 0) * 5) + ((walletForm.sp || 0) * 0.1) + ((walletForm.cp || 0) * 0.01);
+                          const addedGP = ((walletForm.pp || 0) * 10) + (walletForm.gp || 0) + ((walletForm.ep || 0) * 0.5) + ((walletForm.sp || 0) * 0.1) + ((walletForm.cp || 0) * 0.01);
                           if (addedGP > 0) {
                             updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
                             showToast(`Added ${addedGP.toFixed(2)} GP worth`, 'success');
@@ -11652,11 +11670,11 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           const spendCP = walletForm.cp || 0;
                           
                           // Calculate total cost in copper (smallest unit) for precision
-                          const costInCopper = (spendPP * 1000) + (spendEP * 500) + (spendGP * 100) + (spendSP * 10) + spendCP;
+                          const costInCopper = (spendPP * 1000) + (spendEP * 50) + (spendGP * 100) + (spendSP * 10) + spendCP;
                           
                           // Calculate total wallet value in copper - ensure numbers and round to avoid floating point issues
                           const walletInCopper = (Math.round(Number(wallet.platinum) || 0) * 1000) + 
-                                                (Math.round(Number(wallet.electrum) || 0) * 500) + 
+                                                (Math.round(Number(wallet.electrum) || 0) * 50) + 
                                                 (Math.round(Number(wallet.gold) || 0) * 100) + 
                                                 (Math.round(Number(wallet.silver) || 0) * 10) + 
                                                 Math.round(Number(wallet.copper) || 0);
@@ -11695,6 +11713,25 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             }
                           }
                           
+                          // Pay with electrum (1 EP = 50 CP = 5 SP)
+                          if (remainingCost > 0) {
+                            const epNeeded = Math.ceil(remainingCost / 50);
+                            const epToPay = Math.min(newWallet.electrum || 0, epNeeded);
+                            newWallet.electrum = (newWallet.electrum || 0) - epToPay;
+                            const epValue = epToPay * 50;
+                            if (epValue > remainingCost) {
+                              // Give change - prefer silver over copper
+                              let change = epValue - remainingCost;
+                              const changeInSP = Math.floor(change / 10);
+                              newWallet.silver = (newWallet.silver || 0) + changeInSP;
+                              change -= changeInSP * 10;
+                              newWallet.copper = (newWallet.copper || 0) + change;
+                              remainingCost = 0;
+                            } else {
+                              remainingCost -= epValue;
+                            }
+                          }
+
                           // Pay with gold (1 GP = 100 CP)
                           if (remainingCost > 0) {
                             const gpNeeded = Math.ceil(remainingCost / 100);
@@ -11711,28 +11748,6 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               remainingCost = 0;
                             } else {
                               remainingCost -= gpValue;
-                            }
-                          }
-                          
-                          // Pay with electrum (1 EP = 500 CP = 5 GP)
-                          if (remainingCost > 0) {
-                            const epNeeded = Math.ceil(remainingCost / 500);
-                            const epToPay = Math.min(newWallet.electrum || 0, epNeeded);
-                            newWallet.electrum = (newWallet.electrum || 0) - epToPay;
-                            const epValue = epToPay * 500;
-                            if (epValue > remainingCost) {
-                              // Give change - prefer gold, then silver, then copper
-                              let change = epValue - remainingCost;
-                              const changeInGP = Math.floor(change / 100);
-                              newWallet.gold = (newWallet.gold || 0) + changeInGP;
-                              change -= changeInGP * 100;
-                              const changeInSP = Math.floor(change / 10);
-                              newWallet.silver = (newWallet.silver || 0) + changeInSP;
-                              change -= changeInSP * 10;
-                              newWallet.copper = (newWallet.copper || 0) + change;
-                              remainingCost = 0;
-                            } else {
-                              remainingCost -= epValue;
                             }
                           }
                           
@@ -11758,7 +11773,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                             }
                           }
                           
-                          const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
+                          const newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 0.5) + newWallet.gold + (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                           
                           const spentGP = costInCopper / 100;
                           updateChar({ wallet: newWallet, moneyGP: Math.round(newMoneyGP * 100) / 100 });
@@ -11772,7 +11787,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     </div>
                     
                     <div className="text-xs text-gray-500 mt-2 text-center">
-                      Conversion: 100 CP = 10 SP = 1 GP • 5 GP = 1 EP • 2 EP = 1 PP (10 GP)
+                      Conversion: 10 CP = 1 SP • 5 SP = 1 EP • 2 EP = 1 GP • 10 GP = 1 PP
                     </div>
                   </div>
 
@@ -11860,8 +11875,8 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       >
                         <option value="cp">CP</option>
                         <option value="sp">SP</option>
-                        <option value="gp">GP</option>
                         <option value="ep">EP</option>
+                        <option value="gp">GP</option>
                         <option value="pp">PP</option>
                       </select>
                     </div>
@@ -12926,7 +12941,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               silver: (newWallet.silver || 0) + (deletedItem.storedCoins.silver || 0),
                               copper: (newWallet.copper || 0) + (deletedItem.storedCoins.copper || 0)
                             };
-                            newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 5) + newWallet.gold + 
+                            newMoneyGP = (newWallet.platinum * 10) + (newWallet.electrum * 0.5) + newWallet.gold + 
                                         (newWallet.silver * 0.1) + (newWallet.copper * 0.01);
                           } else if (deletedItem.storedCoinsGP) {
                             // Legacy: return as gold
@@ -13226,7 +13241,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                   silver: (newWallet.silver || 0) + (sellItem.storedCoins.silver || 0),
                                   copper: (newWallet.copper || 0) + (sellItem.storedCoins.copper || 0)
                                 };
-                                coinsReturned = (sellItem.storedCoins.platinum * 10) + (sellItem.storedCoins.electrum * 5) + 
+                                coinsReturned = (sellItem.storedCoins.platinum * 10) + (sellItem.storedCoins.electrum * 0.5) + 
                                                sellItem.storedCoins.gold + (sellItem.storedCoins.silver * 0.1) + 
                                                (sellItem.storedCoins.copper * 0.01);
                               } else if (sellItem.storedCoinsGP) {
