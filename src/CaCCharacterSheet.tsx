@@ -2413,12 +2413,13 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
     const levelDrained = char.levelDrained || [];
     
     // Use new system (hpRollsByLevel) if available, otherwise fall back to old system
-    if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
+        if (char.hpRollsByLevel && char.hpRollsByLevel.length > 0) {
       // New system: base roll + current CON mod per level
       const levelHP = char.hpRollsByLevel.reduce((sum, baseRoll, idx) => {
         const isDrained = levelDrained[idx] === true;
         if (isDrained) return sum;
-        return sum + baseRoll + conMod;
+        if (!baseRoll || baseRoll <= 0) return sum;
+        return sum + Math.max(1, baseRoll + conMod);
       }, 0);
       const bonusHP = char.hpBonus || 0;
       return levelHP + bonusHP;
