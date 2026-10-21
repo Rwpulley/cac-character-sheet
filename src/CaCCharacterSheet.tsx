@@ -10823,13 +10823,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       </div>
                       
                       <div className="text-xs text-gray-500 mb-2 bg-gray-800 p-2 rounded">
-                        Supporting class XP is split: first half added at odd primary levels (2,4,6...), second half at even (3,5,7...).
+                        Supporting class XP is split: first half added at primary levels 2,4,6..., second half at 3,5,7...
                       </div>
                       
                       <div className="space-y-3">
                         {xpTableClass1Form.map((_, i) => {
                           const primaryXP = xpTableClass1Form[i] || 0;
-                          const supportingLevelIndex = Math.floor((i) / 2);
+                          // Supporting level k is paid half at primary level 2k and half at 2k+1 (index k-1)
+                          const supportingLevelIndex = Math.floor((i - 1) / 2);
                           const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
                           const halfSupporting = Math.floor(supportingXP / 2);
                           const supportCost = i === 0 ? 0 : halfSupporting;
@@ -10900,7 +10901,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           // Calculate combined xpTable for class and a half
                           const combinedTable = xpTableClass1Form.map((primaryXP, i) => {
                             if (i === 0) return primaryXP;
-                            const supportingLevelIndex = Math.floor(i / 2);
+                            const supportingLevelIndex = Math.floor((i - 1) / 2);
                             const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
                             const halfSupporting = Math.floor(supportingXP / 2);
                             return primaryXP + halfSupporting;
