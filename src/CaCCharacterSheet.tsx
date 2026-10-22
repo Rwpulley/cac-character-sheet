@@ -202,6 +202,7 @@ interface Character {
   xpTableClass1?: number[];
   xpTableClass2?: number[];
   xpTableClass3?: number[];
+  xpTableSupporting?: number[];  // Class and a half: full supporting-class XP per level (half is added)
   classType?: 'single' | 'multi' | 'classAndHalf';  // Type of class setup
   primeSaveBonus: number;
   attackBonus: number;
@@ -2908,7 +2909,9 @@ const [hpLevelsShown, setHpLevelsShown] = useState(3);
       // Also initialize multi-class tables
       initMultiXpTableForms(
         char.xpTableClass1 || defaultTable,
-        char.xpTableClass2 || defaultTable,
+        char.classType === 'classAndHalf'
+          ? (char.xpTableSupporting || (char.xpTableClass1 || defaultTable).map(() => 0))
+          : (char.xpTableClass2 || defaultTable),
         char.xpTableClass3 || defaultTable
       );
     }
@@ -4352,7 +4355,7 @@ if (editModal.type === 'acTracking' && char) {
                 <ul className={`list-disc list-inside space-y-2 ${theme.textMuted2}`}>
                   <li><span className="text-blue-400 font-semibold">Single Class:</span> One class with standard XP progression. Enter your class's XP requirements in Level XP.</li>
                   <li><span className="text-green-400 font-semibold">Multi-Class:</span> 2-3 classes that level together. Enter each class's XP requirements separately - the app combines them plus the multi-class bonus (+200 XP/level for 2 classes, +300 XP/level for 3 classes).</li>
-                  <li><span className="text-purple-400 font-semibold">Class and a Half:</span> Primary class at full XP, supporting class at half speed. The supporting class XP is split across 2 primary levels (first half at levels 2,4,6... second half at 3,5,7...).</li>
+                  <li><span className="text-purple-400 font-semibold">Class and a Half:</span> Primary class at full XP, supporting class at half speed. Enter the full XP for both classes at each level; the app adds half of the supporting class XP (rounded up). The supporting class is half the primary level, rounded down (level 1 = 0, 2-3 = 1, 4-5 = 2...).</li>
                 </ul>
               </div>
 
@@ -9484,7 +9487,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                     <ul className="text-sm text-gray-300 space-y-2 ml-4 list-disc">
                       <li><span className="font-semibold text-white">Single Class:</span> One class with standard XP progression.</li>
                       <li><span className="font-semibold text-white">Multi-Class:</span> 2-3 classes that level together. XP requirements are combined plus a multi-class bonus (+200 XP per level for 2 classes, +300 XP per level for 3 classes).</li>
-                      <li><span className="font-semibold text-white">Class and a Half:</span> Primary class at full XP progression, supporting class at half speed. The supporting class XP is split: first half added at primary levels 2,4,6... and second half at 3,5,7...</li>
+                      <li><span className="font-semibold text-white">Class and a Half:</span> Primary class at full XP progression, supporting class at half speed. Enter the full XP for both classes at each level and the app adds half of the supporting class XP (rounded up). The supporting class is half the primary level, rounded down (level 1 = 0, 2-3 = 1, 4-5 = 2...).</li>
                     </ul>
                   </div>
                   
@@ -9738,7 +9741,7 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                           className="w-full p-4 bg-gray-700 rounded-lg hover:bg-gray-600 text-left"
                         >
                           <div className="font-bold text-white">Class and a Half</div>
-                          <div className="text-sm text-gray-400">Primary class + half XP from supporting class spread over 2 levels</div>
+                          <div className="text-sm text-gray-400">Primary class + half XP from supporting class; supporting advances at half speed</div>
                         </button>
                       </div>
                       
@@ -9871,15 +9874,14 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                               placeholder="e.g., Wizard"
                               className="w-full p-2 bg-gray-700 rounded text-white"
                             />
-                            <div className="text-xs text-gray-500 mt-1">Half XP spread over 2 levels</div>
+                            <div className="text-xs text-gray-500 mt-1">Half XP added each level, advances at half speed</div>
                           </div>
                           
                           <div className="text-xs text-gray-500 bg-gray-800 p-2 rounded">
                             <div className="font-semibold text-gray-400 mb-1">Class and a Half XP:</div>
-                            <div>Primary Level 2 = Primary L2 + ½ Supporting L1</div>
-                            <div>Primary Level 3 = Primary L3 + other ½ of Supporting L1</div>
-                            <div>Primary Level 4 = Primary L4 + ½ Supporting L2</div>
-                            <div>...and so on</div>
+                            <div>Primary Level 2 = Primary L2 XP + ½ Supporting L2 XP (rounded up)</div>
+                            <div>Primary Level 3 = Primary L3 XP + ½ Supporting L3 XP</div>
+                            <div>Supporting level = half the primary level, rounded down (1→0, 2→1, 3→1, 4→2...)</div>
                           </div>
                         </div>
                       )}
@@ -10819,32 +10821,31 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                   {char.classType === 'classAndHalf' && (
                     <>
                       <div className="text-sm text-gray-400 mb-3">
-                        Enter XP for primary class (full) and supporting class (half, spread over 2 levels).
+                        Enter the full XP for both classes at each level. The app adds half of the supporting class XP (rounded up).
                       </div>
                       
                       <div className="text-xs text-gray-500 mb-2 bg-gray-800 p-2 rounded">
-                        Supporting class XP is split: first half added at primary levels 2,4,6..., second half at 3,5,7...
+                        Supporting class advances at half speed: level 1 = 0, levels 2-3 = 1, levels 4-5 = 2, and so on.
                       </div>
                       
                       <div className="space-y-3">
                         {xpTableClass1Form.map((_, i) => {
                           const primaryXP = xpTableClass1Form[i] || 0;
-                          // Supporting level k is paid half at primary level 2k and half at 2k+1 (index k-1)
-                          const supportingLevelIndex = Math.floor((i - 1) / 2);
-                          const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
-                          const halfSupporting = Math.floor(supportingXP / 2);
-                          const supportCost = i === 0 ? 0 : halfSupporting;
+                          const supportingXP = xpTableClass2Form[i] || 0;
+                          const supportCost = i === 0 ? 0 : Math.ceil(supportingXP / 2);
                           const total = primaryXP + supportCost;
-                          const isFirstHalf = i % 2 === 1;
-                          const supportLevelForDisplay = Math.ceil(i / 2);
+                          const supportLevel = Math.floor((i + 1) / 2);
                           
                           return (
                             <div key={i} className="bg-gray-800 p-3 rounded-lg">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="font-bold text-white">Level {i + 1}</span>
+                                <span className="font-bold text-white">
+                                  Level {i + 1}
+                                  <span className="text-xs text-gray-400 font-normal ml-2">({char.class2 || 'Support'} {supportLevel})</span>
+                                </span>
                                 <span className="text-yellow-400 font-semibold">
                                   Total: {total.toLocaleString()}
-                                  {supportCost > 0 && <span className="text-xs text-gray-500 ml-1">(+{supportCost})</span>}
+                                  {supportCost > 0 && <span className="text-xs text-gray-500 ml-1">(+{supportCost.toLocaleString()})</span>}
                                 </span>
                               </div>
                               <div className="space-y-2">
@@ -10866,10 +10867,10 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                   />
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <label className="text-xs text-green-400 w-24 flex-shrink-0">
-                                    {char.class2 || 'Support'} L{supportLevelForDisplay}
-                                  </label>
-                                  {i > 0 && i % 2 === 1 ? (
+                                  <label className="text-xs text-green-400 w-24 flex-shrink-0">{char.class2 || 'Support'}</label>
+                                  {i === 0 ? (
+                                    <div className="flex-1 text-xs text-gray-500 p-2 bg-gray-700 rounded">— (no XP at level 1)</div>
+                                  ) : (
                                     <input
                                       type="text" inputMode="numeric"
                                       value={supportingXP === 0 ? '' : supportingXP}
@@ -10877,17 +10878,13 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                                         const val = parseInt(e.target.value) || 0;
                                         setXpTableClass2Form(prev => {
                                           const next = [...prev];
-                                          next[supportingLevelIndex] = val;
+                                          next[i] = val;
                                           return next;
                                         });
                                       }}
                                       className="flex-1 p-2 bg-gray-700 rounded text-white text-sm"
                                       placeholder="Full XP for this level"
                                     />
-                                  ) : (
-                                    <div className="flex-1 text-xs text-gray-500 p-2 bg-gray-700 rounded">
-                                      {i === 0 ? '— (none at L1)' : `½ of ${supportingXP.toLocaleString()} = ${halfSupporting.toLocaleString()}`}
-                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -10898,19 +10895,16 @@ updateChar({ raceAbilities: list, raceAttributeMods: cleanedRaceMods });
                       
                       <button
                         onClick={() => {
-                          // Calculate combined xpTable for class and a half
+                          // Combined table: primary XP + half of supporting XP for the same level (rounded up)
                           const combinedTable = xpTableClass1Form.map((primaryXP, i) => {
                             if (i === 0) return primaryXP;
-                            const supportingLevelIndex = Math.floor((i - 1) / 2);
-                            const supportingXP = xpTableClass2Form[supportingLevelIndex] || 0;
-                            const halfSupporting = Math.floor(supportingXP / 2);
-                            return primaryXP + halfSupporting;
+                            return primaryXP + Math.ceil((xpTableClass2Form[i] || 0) / 2);
                           });
                           
                           updateChar({
                             xpTable: combinedTable,
                             xpTableClass1: xpTableClass1Form,
-                            xpTableClass2: xpTableClass2Form
+                            xpTableSupporting: xpTableClass1Form.map((_, i) => xpTableClass2Form[i] || 0)
                           });
                           setEditModal(null);
                         }}
